@@ -1,0 +1,983 @@
+import { useAuth } from '../contexts/AuthContext'
+import { useEffect, useState } from 'react'
+import { supabase } from '../lib/supabase'
+import Modal from '../components/Modal'
+import {
+    Users,
+    Briefcase,
+    Building2,
+    UserPlus,
+    Plus,
+    LogOut,
+    LayoutGrid,
+    ChevronRight,
+    Building,
+    User
+} from 'lucide-react'
+
+interface Profile {
+    id: string
+    email: string
+    full_name: string
+    role: 'admin' | 'client_coordinator' | 'employee'
+}
+
+interface Client {
+    id: string
+    name: string
+    cc_id: string
+    created_at: string
+}
+
+interface Workspace {
+    id: string
+    client_id: string
+    name: string
+    created_at: string
+}
+
+interface Department {
+    id: string
+    workspace_id: string
+    name: string
+    created_at: string
+}
+
+interface Employee {
+    id: string
+    email: string
+    full_name: string
+    created_at: string
+}
+
+export default function CCDashboard() {
+    const { user, signOut } = useAuth()
+    const [profile, setProfile] = useState<Profile | null>(null)
+    const [clients, setClients] = useState<Client[]>([])
+    const [selectedClient, setSelectedClient] = useState<string | null>(null)
+    const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+    const [selectedWorkspace, setSelectedWorkspace] = useState<string | null>(null)
+    const [departments, setDepartments] = useState<Department[]>([])
+    const [employees, setEmployees] = useState<Employee[]>([])
+    const [loading, setLoading] = useState(true)
+
+    // Form states
+    const [showAddClient, setShowAddClient] = useState(false)
+    const [showAddWorkspace, setShowAddWorkspace] = useState(false)
+    const [showAddDepartment, setShowAddDepartment] = useState(false)
+    const [showAddEmployee, setShowAddEmployee] = useState(false)
+
+    const [clientName, setClientName] = useState('')
+    const [workspaceName, setWorkspaceName] = useState('')
+    const [departmentName, setDepartmentName] = useState('')
+    const [empFullName, setEmpFullName] = useState('')
+    const [empEmail, setEmpEmail] = useState('')
+    const [empPassword, setEmpPassword] = useState('')
+    const [error, setError] = useState<string | null>(null)
+
+    // Department-Employee Assignment states
+    const [showAssignEmployees, setShowAssignEmployees] = useState(false)
+    const [selectedDepartment, setSelectedDepartment] = useState<string | null>(null)
+    const [departmentEmployees, setDepartmentEmployees] = useState<{ [key: string]: Employee[] }>({})
+    const [assignedEmployeeIds, setAssignedEmployeeIds] = useState<Set<string>>(new Set())
+
+    useEffect(() => {
+        loadProfile()
+        loadClients()
+        loadEmployees()
+    }, [user])
+
+    useEffect(() => {
+        if (selectedClient) {
+            loadWorkspaces(selectedClient)
+            setSelectedWorkspace(null)
+            setDepartments([])
+        }
+    }, [selectedClient])
+
+    useEffect(() => {
+        if (selectedWorkspace) {
+            loadDepartments(selectedWorkspace)
+        }
+    }, [selectedWorkspace])
+
+    const loadProfile = async () => {
+        if (!user) return
+        const { data } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', user.id)
+            .single()
+        setProfile(data)
+        setLoading(false)
+    }
+
+    const loadClients = async () => {
+        const { data } = await supabase
+            .from('clients')
+            .select('*')
+            .eq('cc_id', user?.id)
+            .order('created_at', { ascending: false })
+        setClients(data || [])
+    }
+
+    const loadWorkspaces = async (clientId: string) => {
+        const { data } = await supabase
+            .from('workspaces')
+            .select('*')
+            .eq('client_id', clientId)
+            .order('created_at', { ascending: false })
+        setWorkspaces(data || [])
+    }
+
+    const loadDepartments = async (workspaceId: string) => {
+        const { data } = await supabase
+            .from('departments')
+            .select('*')
+            .eq('workspace_id', workspaceId)
+            .order('created_at', { ascending: false })
+        setDepartments(data || [])
+    }
+
+    const loadEmployees = async () => {
+        const { data } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('role', 'employee')
+            .eq('created_by', user?.id)
+            .order('created_at', { ascending: false })
+        setEmployees(data || [])
+    }
+
+    const handleAddClient = async (e: React.FormEvent) => {
+        e.preventDefault()
+        setError(null)
+        const { error } = await supabase
+            .from('clients')
+            .insert({ name: clientName, cc_id: user?.id })
+        if (error) {
+            setError(error.message)
+            return
+        }
+        setClientName('')
+        setShowAddClient(false)
+        loadClients()
+    }
+
+    const handleAddWorkspace = async (e: React.FormEvent) => {
+        e.preventDefault()
+        if (!selectedClient) return
+        setError(null)
+        const { error } = await supabase
+            .from('workspaces')
+            .insert({ name: workspaceName, client_id: selectedClient })
+        if (error) {
+            setError(error.message)
+            return
+        }
+        setWorkspaceName('')
+        setShowAddWorkspace(false)
+        loadWorkspaces(selectedClient)
+    }
+
+    const handleAddDepartment = async (e: React.FormEvent) => {
+        e.preventDefault()
+        if (!selectedWorkspace) return
+        setError(null)
+        const { error } = await supabase
+            .from('departments')
+            .insert({ name: departmentName, workspace_id: selectedWorkspace })
+        if (error) {
+            setError(error.message)
+            return
+        }
+        setDepartmentName('')
+        setShowAddDepartment(false)
+        loadDepartments(selectedWorkspace)
+    }
+
+    const handleAddEmployee = async (e: React.FormEvent) => {
+        e.preventDefault()
+        setError(null)
+
+        const { data, error: signUpError } = await supabase.auth.signUp({
+            email: empEmail,
+            password: empPassword,
+            options: {
+                data: {
+                    full_name: empFullName,
+                    role: 'employee',
+                },
+            },
+        })
+
+        if (signUpError) {
+            setError(signUpError.message)
+            return
+        }
+
+        if (data.user) {
+            await supabase
+                .from('profiles')
+                .update({ created_by: user?.id })
+                .eq('id', data.user.id)
+        }
+
+        setEmpFullName('')
+        setEmpEmail('')
+        setEmpPassword('')
+        setShowAddEmployee(false)
+        loadEmployees()
+    }
+
+    const loadDepartmentEmployees = async (departmentId: string) => {
+        const { data } = await supabase
+            .from('department_employees')
+            .select('employee_id, profiles!inner(id, email, full_name, created_at)')
+            .eq('department_id', departmentId)
+
+        if (data) {
+            const empList = data.map((de: any) => de.profiles)
+            setDepartmentEmployees(prev => ({ ...prev, [departmentId]: empList }))
+            setAssignedEmployeeIds(new Set(empList.map((e: Employee) => e.id)))
+        }
+    }
+
+    const handleOpenAssignEmployees = async (departmentId: string) => {
+        setSelectedDepartment(departmentId)
+        await loadDepartmentEmployees(departmentId)
+        setShowAssignEmployees(true)
+    }
+
+    const handleToggleEmployeeAssignment = async (employeeId: string) => {
+        if (!selectedDepartment) return
+
+        const isAssigned = assignedEmployeeIds.has(employeeId)
+
+        if (isAssigned) {
+            // Unassign
+            const { error } = await supabase
+                .from('department_employees')
+                .delete()
+                .eq('department_id', selectedDepartment)
+                .eq('employee_id', employeeId)
+
+            if (!error) {
+                setAssignedEmployeeIds(prev => {
+                    const newSet = new Set(prev)
+                    newSet.delete(employeeId)
+                    return newSet
+                })
+                await loadDepartmentEmployees(selectedDepartment)
+            }
+        } else {
+            // Assign
+            const { error } = await supabase
+                .from('department_employees')
+                .insert({ department_id: selectedDepartment, employee_id: employeeId })
+
+            if (!error) {
+                setAssignedEmployeeIds(prev => new Set(prev).add(employeeId))
+                await loadDepartmentEmployees(selectedDepartment)
+            }
+        }
+    }
+
+    if (loading) {
+        return (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', color: '#6b7280' }}>
+                <div className="animate-pulse">Loading dashboard...</div>
+            </div>
+        )
+    }
+
+    return (
+        <div style={{ minHeight: '100vh', background: '#f9fafb', fontFamily: 'Inter, sans-serif' }}>
+            {/* Header */}
+            <header style={{
+                background: 'white',
+                borderBottom: '1px solid #e5e7eb',
+                padding: '1rem 2rem',
+                position: 'sticky',
+                top: 0,
+                zIndex: 10,
+            }}>
+                <div style={{
+                    maxWidth: '1400px',
+                    margin: '0 auto',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                        <div style={{
+                            width: '40px',
+                            height: '40px',
+                            background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
+                            borderRadius: '10px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: 'white',
+                            boxShadow: '0 4px 6px -1px rgba(79, 70, 229, 0.2)',
+                        }}>
+                            <LayoutGrid size={24} />
+                        </div>
+                        <div>
+                            <h1 style={{ fontSize: '1.25rem', fontWeight: '700', color: '#111827', margin: 0 }}>
+                                Coordinator Dashboard
+                            </h1>
+                            <p style={{ color: '#6b7280', fontSize: '0.875rem', margin: 0 }}>
+                                {profile?.full_name || user?.email}
+                            </p>
+                        </div>
+                    </div>
+                    <button
+                        onClick={signOut}
+                        style={{
+                            padding: '0.5rem 1rem',
+                            background: 'white',
+                            color: '#ef4444',
+                            border: '1px solid #fee2e2',
+                            borderRadius: '0.5rem',
+                            cursor: 'pointer',
+                            fontWeight: '600',
+                            fontSize: '0.875rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            transition: 'all 0.2s',
+                        }}
+                        onMouseEnter={(e) => {
+                            e.currentTarget.style.background = '#fef2f2';
+                            e.currentTarget.style.borderColor = '#fecaca';
+                        }}
+                        onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'white';
+                            e.currentTarget.style.borderColor = '#fee2e2';
+                        }}
+                    >
+                        <LogOut size={16} />
+                        Sign Out
+                    </button>
+                </div>
+            </header>
+
+            <main style={{ maxWidth: '1400px', margin: '0 auto', padding: '2rem' }}>
+                {/* Stats Grid */}
+                <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+                    gap: '1.5rem',
+                    marginBottom: '2rem',
+                }}>
+                    {[
+                        { label: 'Total Clients', value: clients.length, icon: Users, color: '#4f46e5', bg: '#eef2ff' },
+                        { label: 'Active Workspaces', value: workspaces.length, icon: Briefcase, color: '#0891b2', bg: '#ecfeff' },
+                        { label: 'Departments', value: departments.length, icon: Building2, color: '#ea580c', bg: '#fff7ed' },
+                        { label: 'Total Employees', value: employees.length, icon: UserPlus, color: '#059669', bg: '#ecfdf5' },
+                    ].map((stat, i) => (
+                        <div key={i} style={{
+                            background: 'white',
+                            padding: '1.5rem',
+                            borderRadius: '1rem',
+                            border: '1px solid #e5e7eb',
+                            boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '1rem',
+                            transition: 'transform 0.2s',
+                        }}
+                            onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+                            onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                        >
+                            <div style={{
+                                padding: '1rem',
+                                borderRadius: '0.75rem',
+                                background: stat.bg,
+                                color: stat.color,
+                            }}>
+                                <stat.icon size={24} />
+                            </div>
+                            <div>
+                                <div style={{ fontSize: '0.875rem', color: '#6b7280', fontWeight: '500' }}>{stat.label}</div>
+                                <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#111827' }}>{stat.value}</div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '2rem', alignItems: 'start' }}>
+
+                    {/* Left Column: Hierarchy Management */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+
+                        {/* Clients Section */}
+                        <div style={{ background: 'white', borderRadius: '1rem', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                            <div style={{
+                                padding: '1rem 1.5rem',
+                                borderBottom: '1px solid #e5e7eb',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                background: '#f9fafb',
+                            }}>
+                                <h2 style={{ fontSize: '1rem', fontWeight: '600', color: '#111827', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <Users size={18} /> Clients
+                                </h2>
+                                <button
+                                    onClick={() => setShowAddClient(true)}
+                                    style={{
+                                        padding: '0.375rem 0.75rem',
+                                        background: '#4f46e5',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '0.375rem',
+                                        fontSize: '0.875rem',
+                                        fontWeight: '500',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.25rem',
+                                    }}
+                                >
+                                    <Plus size={16} /> Add
+                                </button>
+                            </div>
+                            <div style={{ padding: '0.5rem', maxHeight: '300px', overflowY: 'auto' }}>
+                                {clients.length === 0 ? (
+                                    <div style={{ padding: '2rem', textAlign: 'center', color: '#9ca3af', fontSize: '0.875rem' }}>
+                                        No clients found. Add one to get started.
+                                    </div>
+                                ) : (
+                                    clients.map((client) => (
+                                        <div
+                                            key={client.id}
+                                            onClick={() => setSelectedClient(client.id)}
+                                            style={{
+                                                padding: '0.75rem 1rem',
+                                                borderRadius: '0.5rem',
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'space-between',
+                                                background: selectedClient === client.id ? '#eef2ff' : 'transparent',
+                                                color: selectedClient === client.id ? '#4f46e5' : '#374151',
+                                                fontWeight: selectedClient === client.id ? '600' : '400',
+                                                transition: 'all 0.2s',
+                                            }}
+                                        >
+                                            <span>{client.name}</span>
+                                            {selectedClient === client.id && <ChevronRight size={16} />}
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Workspaces Section */}
+                        {selectedClient && (
+                            <div style={{ background: 'white', borderRadius: '1rem', border: '1px solid #e5e7eb', overflow: 'hidden', animation: 'fadeIn 0.3s ease-out' }}>
+                                <div style={{
+                                    padding: '1rem 1.5rem',
+                                    borderBottom: '1px solid #e5e7eb',
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    background: '#f9fafb',
+                                }}>
+                                    <h2 style={{ fontSize: '1rem', fontWeight: '600', color: '#111827', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                        <Briefcase size={18} /> Workspaces
+                                    </h2>
+                                    <button
+                                        onClick={() => setShowAddWorkspace(true)}
+                                        style={{
+                                            padding: '0.375rem 0.75rem',
+                                            background: '#0891b2',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '0.375rem',
+                                            fontSize: '0.875rem',
+                                            fontWeight: '500',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.25rem',
+                                        }}
+                                    >
+                                        <Plus size={16} /> Add
+                                    </button>
+                                </div>
+                                <div style={{ padding: '0.5rem', maxHeight: '300px', overflowY: 'auto' }}>
+                                    {workspaces.length === 0 ? (
+                                        <div style={{ padding: '2rem', textAlign: 'center', color: '#9ca3af', fontSize: '0.875rem' }}>
+                                            No workspaces in this client.
+                                        </div>
+                                    ) : (
+                                        workspaces.map((ws) => (
+                                            <div
+                                                key={ws.id}
+                                                onClick={() => setSelectedWorkspace(ws.id)}
+                                                style={{
+                                                    padding: '0.75rem 1rem',
+                                                    borderRadius: '0.5rem',
+                                                    cursor: 'pointer',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'space-between',
+                                                    background: selectedWorkspace === ws.id ? '#ecfeff' : 'transparent',
+                                                    color: selectedWorkspace === ws.id ? '#0891b2' : '#374151',
+                                                    fontWeight: selectedWorkspace === ws.id ? '600' : '400',
+                                                    transition: 'all 0.2s',
+                                                }}
+                                            >
+                                                <span>{ws.name}</span>
+                                                {selectedWorkspace === ws.id && <ChevronRight size={16} />}
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Departments Section */}
+                        {selectedWorkspace && (
+                            <div style={{ background: 'white', borderRadius: '1rem', border: '1px solid #e5e7eb', overflow: 'hidden', animation: 'fadeIn 0.3s ease-out' }}>
+                                <div style={{
+                                    padding: '1rem 1.5rem',
+                                    borderBottom: '1px solid #e5e7eb',
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    background: '#f9fafb',
+                                }}>
+                                    <h2 style={{ fontSize: '1rem', fontWeight: '600', color: '#111827', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                        <Building2 size={18} /> Departments
+                                    </h2>
+                                    <button
+                                        onClick={() => setShowAddDepartment(true)}
+                                        style={{
+                                            padding: '0.375rem 0.75rem',
+                                            background: '#ea580c',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '0.375rem',
+                                            fontSize: '0.875rem',
+                                            fontWeight: '500',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.25rem',
+                                        }}
+                                    >
+                                        <Plus size={16} /> Add
+                                    </button>
+                                </div>
+                                <div style={{ padding: '0.5rem', maxHeight: '300px', overflowY: 'auto' }}>
+                                    {departments.length === 0 ? (
+                    </div>
+
+                                {/* Right Column: Employees */}
+                                <div style={{ background: 'white', borderRadius: '1rem', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                                    <div style={{
+                                        padding: '1.5rem',
+                                        borderBottom: '1px solid #e5e7eb',
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                    }}>
+                                        <div>
+                                            <h2 style={{ fontSize: '1.25rem', fontWeight: '700', color: '#111827', marginBottom: '0.25rem' }}>
+                                                Employees
+                                            </h2>
+                                            <p style={{ color: '#6b7280', fontSize: '0.875rem', margin: 0 }}>
+                                                Manage your team members and roles
+                                            </p>
+                                        </div>
+                                        <button
+                                            onClick={() => setShowAddEmployee(true)}
+                                            style={{
+                                                padding: '0.625rem 1.25rem',
+                                                background: '#059669',
+                                                color: 'white',
+                                                border: 'none',
+                                                borderRadius: '0.5rem',
+                                                cursor: 'pointer',
+                                                fontWeight: '600',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '0.5rem',
+                                                boxShadow: '0 2px 4px rgba(5, 150, 105, 0.2)',
+                                            }}
+                                        >
+                                            <UserPlus size={18} /> Add Employee
+                                        </button>
+                                    </div>
+
+                                    <div style={{ padding: '0' }}>
+                                        {employees.length === 0 ? (
+                                            <div style={{ padding: '4rem 2rem', textAlign: 'center' }}>
+                                                <div style={{
+                                                    width: '64px', height: '64px', background: '#f3f4f6', borderRadius: '50%',
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem',
+                                                    color: '#9ca3af'
+                                                }}>
+                                                    <UserPlus size={32} />
+                                                </div>
+                                                <h3 style={{ fontSize: '1rem', fontWeight: '600', color: '#374151', marginBottom: '0.5rem' }}>No employees yet</h3>
+                                                <p style={{ color: '#6b7280', fontSize: '0.875rem' }}>
+                                                    Start by adding employees to your organization.
+                                                </p>
+                                            </div>
+                                        ) : (
+                                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                                <thead style={{ background: '#f9fafb' }}>
+                                                    <tr>
+                                                        <th style={{ padding: '0.75rem 1.5rem', textAlign: 'left', fontSize: '0.75rem', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Name</th>
+                                                        <th style={{ padding: '0.75rem 1.5rem', textAlign: 'left', fontSize: '0.75rem', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Email</th>
+                                                        <th style={{ padding: '0.75rem 1.5rem', textAlign: 'left', fontSize: '0.75rem', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Joined</th>
+                                                        <th style={{ padding: '0.75rem 1.5rem', textAlign: 'right', fontSize: '0.75rem', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Status</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {employees.map((emp) => (
+                                                        <tr key={emp.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                                            <td style={{ padding: '1rem 1.5rem' }}>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                                    <div style={{
+                                                                        width: '32px', height: '32px', borderRadius: '50%', background: '#e0e7ff', color: '#4f46e5',
+                                                                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '600', fontSize: '0.875rem'
+                                                                    }}>
+                                                                        {emp.full_name?.[0]?.toUpperCase() || emp.email[0].toUpperCase()}
+                                                                    </div>
+                                                                    <span style={{ fontWeight: '500', color: '#111827' }}>{emp.full_name || 'N/A'}</span>
+                                                                </div>
+                                                            </td>
+                                                            <td style={{ padding: '1rem 1.5rem', color: '#6b7280', fontSize: '0.875rem' }}>{emp.email}</td>
+                                                            <td style={{ padding: '1rem 1.5rem', color: '#6b7280', fontSize: '0.875rem' }}>
+                                                                {new Date(emp.created_at).toLocaleDateString()}
+                                                            </td>
+                                                            <td style={{ padding: '1rem 1.5rem', textAlign: 'right' }}>
+                                                                <span style={{
+                                                                    padding: '0.25rem 0.75rem',
+                                                                    background: '#ecfdf5',
+                                                                    color: '#059669',
+                                                                    borderRadius: '9999px',
+                                                                    fontSize: '0.75rem',
+                                                                    fontWeight: '500',
+                                                                }}>
+                                                                    Active
+                                                                </span>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+            </main>
+
+                    {/* Modals */}
+                    <Modal
+                        isOpen={showAddClient}
+                        onClose={() => setShowAddClient(false)}
+                        title="Add New Client"
+                    >
+                        <form onSubmit={handleAddClient}>
+                            <div style={{ marginBottom: '1.5rem' }}>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#374151', fontWeight: '500', fontSize: '0.875rem' }}>
+                                    Client Name
+                                </label>
+                                <input
+                                    type="text"
+                                    value={clientName}
+                                    onChange={(e) => setClientName(e.target.value)}
+                                    placeholder="e.g. Acme Corp"
+                                    required
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.625rem',
+                                        border: '1px solid #d1d5db',
+                                        borderRadius: '0.5rem',
+                                        fontSize: '0.95rem',
+                                        outline: 'none',
+                                        transition: 'border-color 0.2s',
+                                    }}
+                                    onFocus={(e) => e.target.style.borderColor = '#4f46e5'}
+                                    onBlur={(e) => e.target.style.borderColor = '#d1d5db'}
+                                />
+                            </div>
+                            {error && <div style={{ padding: '0.75rem', background: '#fee2e2', color: '#b91c1c', borderRadius: '0.5rem', marginBottom: '1rem', fontSize: '0.875rem' }}>{error}</div>}
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAddClient(false)}
+                                    style={{
+                                        padding: '0.625rem 1rem',
+                                        background: 'white',
+                                        color: '#374151',
+                                        border: '1px solid #d1d5db',
+                                        borderRadius: '0.5rem',
+                                        cursor: 'pointer',
+                                        fontWeight: '500',
+                                    }}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    style={{
+                                        padding: '0.625rem 1rem',
+                                        background: '#4f46e5',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '0.5rem',
+                                        cursor: 'pointer',
+                                        fontWeight: '500',
+                                    }}
+                                >
+                                    Create Client
+                                </button>
+                            </div>
+                        </form>
+                    </Modal>
+
+                    <Modal
+                        isOpen={showAddWorkspace}
+                        onClose={() => setShowAddWorkspace(false)}
+                        title="Add New Workspace"
+                    >
+                        <form onSubmit={handleAddWorkspace}>
+                            <div style={{ marginBottom: '1.5rem' }}>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#374151', fontWeight: '500', fontSize: '0.875rem' }}>
+                                    Workspace Name
+                                </label>
+                                <input
+                                    type="text"
+                                    value={workspaceName}
+                                    onChange={(e) => setWorkspaceName(e.target.value)}
+                                    placeholder="e.g. Marketing Projects"
+                                    required
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.625rem',
+                                        border: '1px solid #d1d5db',
+                                        borderRadius: '0.5rem',
+                                        fontSize: '0.95rem',
+                                        outline: 'none',
+                                    }}
+                                />
+                            </div>
+                            {error && <div style={{ padding: '0.75rem', background: '#fee2e2', color: '#b91c1c', borderRadius: '0.5rem', marginBottom: '1rem', fontSize: '0.875rem' }}>{error}</div>}
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAddWorkspace(false)}
+                                    style={{
+                                        padding: '0.625rem 1rem',
+                                        background: 'white',
+                                        color: '#374151',
+                                        border: '1px solid #d1d5db',
+                                        borderRadius: '0.5rem',
+                                        cursor: 'pointer',
+                                        fontWeight: '500',
+                                    }}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    style={{
+                                        padding: '0.625rem 1rem',
+                                        background: '#0891b2',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '0.5rem',
+                                        cursor: 'pointer',
+                                        fontWeight: '500',
+                                    }}
+                                >
+                                    Create Workspace
+                                </button>
+                            </div>
+                        </form>
+                    </Modal>
+
+                    <Modal
+                        isOpen={showAddDepartment}
+                        onClose={() => setShowAddDepartment(false)}
+                        title="Add New Department"
+                    >
+                        <form onSubmit={handleAddDepartment}>
+                            <div style={{ marginBottom: '1.5rem' }}>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#374151', fontWeight: '500', fontSize: '0.875rem' }}>
+                                    Department Name
+                                </label>
+                                <input
+                                    type="text"
+                                    value={departmentName}
+                                    onChange={(e) => setDepartmentName(e.target.value)}
+                                    placeholder="e.g. Design Team"
+                                    required
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.625rem',
+                                        border: '1px solid #d1d5db',
+                                        borderRadius: '0.5rem',
+                                        fontSize: '0.95rem',
+                                        outline: 'none',
+                                    }}
+                                />
+                            </div>
+                            {error && <div style={{ padding: '0.75rem', background: '#fee2e2', color: '#b91c1c', borderRadius: '0.5rem', marginBottom: '1rem', fontSize: '0.875rem' }}>{error}</div>}
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAddDepartment(false)}
+                                    style={{
+                                        padding: '0.625rem 1rem',
+                                        background: 'white',
+                                        color: '#374151',
+                                        border: '1px solid #d1d5db',
+                                        borderRadius: '0.5rem',
+                                        cursor: 'pointer',
+                                        fontWeight: '500',
+                                    }}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    style={{
+                                        padding: '0.625rem 1rem',
+                                        background: '#ea580c',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '0.5rem',
+                                        cursor: 'pointer',
+                                        fontWeight: '500',
+                                    }}
+                                >
+                                    Create Department
+                                </button>
+                            </div>
+                        </form>
+                    </Modal>
+
+                    <Modal
+                        isOpen={showAddEmployee}
+                        onClose={() => setShowAddEmployee(false)}
+                        title="Add New Employee"
+                    >
+                        <form onSubmit={handleAddEmployee}>
+                            <div style={{ marginBottom: '1rem' }}>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#374151', fontWeight: '500', fontSize: '0.875rem' }}>
+                                    Full Name
+                                </label>
+                                <div style={{ position: 'relative' }}>
+                                    <User size={18} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+                                    <input
+                                        type="text"
+                                        value={empFullName}
+                                        onChange={(e) => setEmpFullName(e.target.value)}
+                                        placeholder="John Doe"
+                                        required
+                                        style={{
+                                            width: '100%',
+                                            padding: '0.625rem 0.625rem 0.625rem 2.5rem',
+                                            border: '1px solid #d1d5db',
+                                            borderRadius: '0.5rem',
+                                            fontSize: '0.95rem',
+                                            outline: 'none',
+                                        }}
+                                    />
+                                </div>
+                            </div>
+                            <div style={{ marginBottom: '1rem' }}>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#374151', fontWeight: '500', fontSize: '0.875rem' }}>
+                                    Email Address
+                                </label>
+                                <input
+                                    type="email"
+                                    value={empEmail}
+                                    onChange={(e) => setEmpEmail(e.target.value)}
+                                    placeholder="john@example.com"
+                                    required
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.625rem',
+                                        border: '1px solid #d1d5db',
+                                        borderRadius: '0.5rem',
+                                        fontSize: '0.95rem',
+                                        outline: 'none',
+                                    }}
+                                />
+                            </div>
+                            <div style={{ marginBottom: '1.5rem' }}>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#374151', fontWeight: '500', fontSize: '0.875rem' }}>
+                                    Password
+                                </label>
+                                <input
+                                    type="password"
+                                    value={empPassword}
+                                    onChange={(e) => setEmpPassword(e.target.value)}
+                                    placeholder="••••••••"
+                                    required
+                                    minLength={6}
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.625rem',
+                                        border: '1px solid #d1d5db',
+                                        borderRadius: '0.5rem',
+                                        fontSize: '0.95rem',
+                                        outline: 'none',
+                                    }}
+                                />
+                                <p style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>Must be at least 6 characters</p>
+                            </div>
+                            {error && <div style={{ padding: '0.75rem', background: '#fee2e2', color: '#b91c1c', borderRadius: '0.5rem', marginBottom: '1rem', fontSize: '0.875rem' }}>{error}</div>}
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAddEmployee(false)}
+                                    style={{
+                                        padding: '0.625rem 1rem',
+                                        background: 'white',
+                                        color: '#374151',
+                                        border: '1px solid #d1d5db',
+                                        borderRadius: '0.5rem',
+                                        cursor: 'pointer',
+                                        fontWeight: '500',
+                                    }}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    style={{
+                                        padding: '0.625rem 1rem',
+                                        background: '#059669',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '0.5rem',
+                                        cursor: 'pointer',
+                                        fontWeight: '500',
+                                    }}
+                                >
+                                    Create Employee
+                                </button>
+                            </div>
+                        </form>
+                    </Modal>
+
+                    <style>{`
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(5px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+                </div>
+                )
+}

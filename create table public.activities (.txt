@@ -1,0 +1,541 @@
+create table public.activities (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  user_id uuid null,
+  action_type text not null,
+  description text not null,
+  entity_id uuid null,
+  created_at timestamp with time zone null default now(),
+  constraint activities_pkey primary key (id),
+  constraint activities_user_id_fkey foreign KEY (user_id) references profiles (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+
+
+
+create table public.clients (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  name text not null,
+  cc_id uuid null,
+  created_at timestamp with time zone null default now(),
+  constraint clients_pkey primary key (id),
+  constraint clients_cc_id_fkey foreign KEY (cc_id) references profiles (id) on delete set null
+) TABLESPACE pg_default;
+
+
+
+create table public.department_employees (
+  department_id uuid not null,
+  employee_id uuid not null,
+  constraint department_employees_pkey primary key (department_id, employee_id),
+  constraint department_employees_department_id_fkey foreign KEY (department_id) references departments (id) on delete CASCADE,
+  constraint department_employees_employee_id_fkey foreign KEY (employee_id) references profiles (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+
+create table public.departments (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  workspace_id uuid null,
+  name text not null,
+  created_at timestamp with time zone null default now(),
+  constraint departments_pkey primary key (id),
+  constraint departments_workspace_id_fkey foreign KEY (workspace_id) references workspaces (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+
+
+create table public.notifications (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  user_id uuid null,
+  title text not null,
+  message text not null,
+  is_read boolean null default false,
+  type text null default 'info'::text,
+  created_at timestamp with time zone null default now(),
+  constraint notifications_pkey primary key (id),
+  constraint notifications_user_id_fkey foreign KEY (user_id) references profiles (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+
+create table public.profiles (
+  id uuid not null,
+  email text not null,
+  full_name text null,
+  role public.user_role null default 'employee'::user_role,
+  created_by uuid null,
+  created_at timestamp with time zone null default now(),
+  status text null default 'active'::text,
+  constraint profiles_pkey primary key (id),
+  constraint profiles_email_key unique (email),
+  constraint profiles_created_by_fkey foreign KEY (created_by) references profiles (id),
+  constraint profiles_id_fkey foreign KEY (id) references auth.users (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+
+create table public.task_assignments (
+  task_id uuid not null,
+  user_id uuid not null,
+  assigned_at timestamp with time zone null default now(),
+  constraint task_assignments_pkey primary key (task_id, user_id),
+  constraint task_assignments_task_id_fkey foreign KEY (task_id) references tasks (id) on delete CASCADE,
+  constraint task_assignments_user_id_fkey foreign KEY (user_id) references profiles (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+
+create table public.task_statuses (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  department_id uuid null,
+  label text not null,
+  position integer not null default 0,
+  color text null default '#e2e8f0'::text,
+  created_at timestamp with time zone null default now(),
+  constraint task_statuses_pkey primary key (id),
+  constraint task_statuses_department_id_fkey foreign KEY (department_id) references departments (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+
+create table public.task_time_logs (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  task_id uuid null,
+  user_id uuid null,
+  start_time timestamp with time zone null default now(),
+  end_time timestamp with time zone null,
+  duration_seconds integer null,
+  created_at timestamp with time zone null default now(),
+  constraint task_time_logs_pkey primary key (id),
+  constraint task_time_logs_task_id_fkey foreign KEY (task_id) references tasks (id) on delete CASCADE,
+  constraint task_time_logs_user_id_fkey foreign KEY (user_id) references profiles (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+
+create table public.tasks (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  department_id uuid null,
+  title text not null,
+  description text null,
+  status_id uuid null,
+  priority text null default 'medium'::text,
+  assigned_to uuid null,
+  created_by uuid null,
+  due_date timestamp with time zone null,
+  created_at timestamp with time zone null default now(),
+  constraint tasks_pkey primary key (id),
+  constraint tasks_assigned_to_fkey foreign KEY (assigned_to) references profiles (id) on delete set null,
+  constraint tasks_created_by_fkey foreign KEY (created_by) references profiles (id) on delete set null,
+  constraint tasks_department_id_fkey foreign KEY (department_id) references departments (id) on delete CASCADE,
+  constraint tasks_status_id_fkey foreign KEY (status_id) references task_statuses (id) on delete set null
+) TABLESPACE pg_default;
+
+
+create table public.workspaces (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  client_id uuid null,
+  name text not null,
+  created_at timestamp with time zone null default now(),
+  constraint workspaces_pkey primary key (id),
+  constraint workspaces_client_id_fkey foreign KEY (client_id) references clients (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+
+
+
+
+
+
+[
+  {
+    "schema_name": "public",
+    "table_name": "activities",
+    "policy_name": "Admins can view all activities",
+    "command": "r",
+    "roles": "public",
+    "using_expression": "is_admin()",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "activities",
+    "policy_name": "Authenticated users can insert activities",
+    "command": "a",
+    "roles": "public",
+    "using_expression": null,
+    "check_expression": "(auth.role() = 'authenticated'::text)"
+  },
+  {
+    "schema_name": "public",
+    "table_name": "activities",
+    "policy_name": "CC can view activities of their employees",
+    "command": "r",
+    "roles": "public",
+    "using_expression": "(EXISTS ( SELECT 1\n   FROM profiles p\n  WHERE ((p.id = activities.user_id) AND (p.created_by = auth.uid()))))",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "activities",
+    "policy_name": "Users can insert activities",
+    "command": "a",
+    "roles": "public",
+    "using_expression": null,
+    "check_expression": "(auth.uid() = user_id)"
+  },
+  {
+    "schema_name": "public",
+    "table_name": "activities",
+    "policy_name": "Users can view own activities",
+    "command": "r",
+    "roles": "public",
+    "using_expression": "(user_id = auth.uid())",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "clients",
+    "policy_name": "Admins can manage all clients",
+    "command": "*",
+    "roles": "public",
+    "using_expression": "is_admin()",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "clients",
+    "policy_name": "CC can insert own client",
+    "command": "a",
+    "roles": "public",
+    "using_expression": null,
+    "check_expression": "(cc_id = auth.uid())"
+  },
+  {
+    "schema_name": "public",
+    "table_name": "clients",
+    "policy_name": "CC can manage own clients",
+    "command": "*",
+    "roles": "public",
+    "using_expression": "(cc_id = auth.uid())",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "department_employees",
+    "policy_name": "Admins can manage department employees",
+    "command": "*",
+    "roles": "public",
+    "using_expression": "is_admin()",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "department_employees",
+    "policy_name": "CC can manage department employees",
+    "command": "*",
+    "roles": "public",
+    "using_expression": "(EXISTS ( SELECT 1\n   FROM ((departments d\n     JOIN workspaces w ON ((w.id = d.workspace_id)))\n     JOIN clients c ON ((c.id = w.client_id)))\n  WHERE ((d.id = department_employees.department_id) AND (c.cc_id = auth.uid()))))",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "departments",
+    "policy_name": "Admins can manage all departments",
+    "command": "*",
+    "roles": "public",
+    "using_expression": "is_admin()",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "departments",
+    "policy_name": "CC can manage own departments",
+    "command": "*",
+    "roles": "public",
+    "using_expression": "(EXISTS ( SELECT 1\n   FROM (workspaces w\n     JOIN clients c ON ((c.id = w.client_id)))\n  WHERE ((w.id = departments.workspace_id) AND (c.cc_id = auth.uid()))))",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "departments",
+    "policy_name": "CCs can view departments",
+    "command": "r",
+    "roles": "public",
+    "using_expression": "(EXISTS ( SELECT 1\n   FROM (workspaces w\n     JOIN clients c ON ((c.id = w.client_id)))\n  WHERE ((w.id = departments.workspace_id) AND (c.cc_id = auth.uid()))))",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "departments",
+    "policy_name": "Employees can view assigned departments",
+    "command": "r",
+    "roles": "public",
+    "using_expression": "(EXISTS ( SELECT 1\n   FROM (task_assignments ta\n     JOIN tasks t ON ((t.id = ta.task_id)))\n  WHERE ((t.department_id = departments.id) AND (ta.user_id = auth.uid()))))",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "notifications",
+    "policy_name": "Authenticated users can insert notifications",
+    "command": "a",
+    "roles": "public",
+    "using_expression": null,
+    "check_expression": "(auth.role() = 'authenticated'::text)"
+  },
+  {
+    "schema_name": "public",
+    "table_name": "notifications",
+    "policy_name": "Users can insert notifications",
+    "command": "a",
+    "roles": "public",
+    "using_expression": null,
+    "check_expression": "true"
+  },
+  {
+    "schema_name": "public",
+    "table_name": "notifications",
+    "policy_name": "Users can update own notifications",
+    "command": "w",
+    "roles": "public",
+    "using_expression": "(user_id = auth.uid())",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "notifications",
+    "policy_name": "Users can view own notifications",
+    "command": "r",
+    "roles": "public",
+    "using_expression": "(user_id = auth.uid())",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "profiles",
+    "policy_name": "Admins can do everything",
+    "command": "*",
+    "roles": "public",
+    "using_expression": "is_admin()",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "profiles",
+    "policy_name": "Allow public read access to all profiles",
+    "command": "r",
+    "roles": "public",
+    "using_expression": "true",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "profiles",
+    "policy_name": "Authenticated users can view profiles",
+    "command": "r",
+    "roles": "authenticated",
+    "using_expression": "true",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "profiles",
+    "policy_name": "CC can insert employees",
+    "command": "a",
+    "roles": "public",
+    "using_expression": null,
+    "check_expression": "is_cc()"
+  },
+  {
+    "schema_name": "public",
+    "table_name": "profiles",
+    "policy_name": "CC can update created employees",
+    "command": "w",
+    "roles": "public",
+    "using_expression": "((created_by = auth.uid()) OR (auth.uid() = id))",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "profiles",
+    "policy_name": "Users can insert own profile during signup",
+    "command": "a",
+    "roles": "public",
+    "using_expression": null,
+    "check_expression": "(auth.uid() = id)"
+  },
+  {
+    "schema_name": "public",
+    "table_name": "profiles",
+    "policy_name": "Users can update own profile",
+    "command": "w",
+    "roles": "public",
+    "using_expression": "(auth.uid() = id)",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "task_assignments",
+    "policy_name": "Admins can manage all task assignments",
+    "command": "*",
+    "roles": "public",
+    "using_expression": "is_admin()",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "task_assignments",
+    "policy_name": "CC can manage task assignments in own departments",
+    "command": "*",
+    "roles": "public",
+    "using_expression": "cc_can_manage_task(task_id)",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "task_assignments",
+    "policy_name": "Users can view own assignments",
+    "command": "r",
+    "roles": "public",
+    "using_expression": "(user_id = auth.uid())",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "task_statuses",
+    "policy_name": "Admins can manage all task statuses",
+    "command": "*",
+    "roles": "public",
+    "using_expression": "is_admin()",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "task_statuses",
+    "policy_name": "Authenticated users can delete task statuses",
+    "command": "d",
+    "roles": "public",
+    "using_expression": "(auth.role() = 'authenticated'::text)",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "task_statuses",
+    "policy_name": "Authenticated users can insert task statuses",
+    "command": "a",
+    "roles": "public",
+    "using_expression": null,
+    "check_expression": "(auth.role() = 'authenticated'::text)"
+  },
+  {
+    "schema_name": "public",
+    "table_name": "task_statuses",
+    "policy_name": "Authenticated users can update task statuses",
+    "command": "w",
+    "roles": "public",
+    "using_expression": "(auth.role() = 'authenticated'::text)",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "task_statuses",
+    "policy_name": "Authenticated users can view statuses",
+    "command": "r",
+    "roles": "authenticated",
+    "using_expression": "true",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "task_statuses",
+    "policy_name": "Authenticated users can view task statuses",
+    "command": "r",
+    "roles": "public",
+    "using_expression": "(auth.role() = 'authenticated'::text)",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "task_statuses",
+    "policy_name": "CC can manage task statuses in own departments",
+    "command": "*",
+    "roles": "public",
+    "using_expression": "(EXISTS ( SELECT 1\n   FROM ((departments d\n     JOIN workspaces w ON ((w.id = d.workspace_id)))\n     JOIN clients c ON ((c.id = w.client_id)))\n  WHERE ((d.id = task_statuses.department_id) AND (c.cc_id = auth.uid()))))",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "task_time_logs",
+    "policy_name": "Admins can view all time logs",
+    "command": "r",
+    "roles": "public",
+    "using_expression": "is_admin()",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "task_time_logs",
+    "policy_name": "CC can view time logs for own tasks",
+    "command": "r",
+    "roles": "public",
+    "using_expression": "(EXISTS ( SELECT 1\n   FROM (((tasks t\n     JOIN departments d ON ((d.id = t.department_id)))\n     JOIN workspaces w ON ((w.id = d.workspace_id)))\n     JOIN clients c ON ((c.id = w.client_id)))\n  WHERE ((t.id = task_time_logs.task_id) AND (c.cc_id = auth.uid()))))",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "task_time_logs",
+    "policy_name": "Users can manage own time logs",
+    "command": "*",
+    "roles": "public",
+    "using_expression": "(user_id = auth.uid())",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "tasks",
+    "policy_name": "Admins can manage all tasks",
+    "command": "*",
+    "roles": "public",
+    "using_expression": "is_admin()",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "tasks",
+    "policy_name": "CC can manage tasks in own departments",
+    "command": "*",
+    "roles": "public",
+    "using_expression": "(EXISTS ( SELECT 1\n   FROM ((departments d\n     JOIN workspaces w ON ((w.id = d.workspace_id)))\n     JOIN clients c ON ((c.id = w.client_id)))\n  WHERE ((d.id = tasks.department_id) AND (c.cc_id = auth.uid()))))",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "tasks",
+    "policy_name": "Employees can update assigned tasks",
+    "command": "w",
+    "roles": "public",
+    "using_expression": "((assigned_to = auth.uid()) OR (EXISTS ( SELECT 1\n   FROM task_assignments ta\n  WHERE ((ta.task_id = tasks.id) AND (ta.user_id = auth.uid())))))",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "tasks",
+    "policy_name": "Employees can view assigned tasks",
+    "command": "r",
+    "roles": "public",
+    "using_expression": "((assigned_to = auth.uid()) OR (EXISTS ( SELECT 1\n   FROM task_assignments\n  WHERE ((task_assignments.task_id = tasks.id) AND (task_assignments.user_id = auth.uid())))))",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "workspaces",
+    "policy_name": "Admins can manage all workspaces",
+    "command": "*",
+    "roles": "public",
+    "using_expression": "is_admin()",
+    "check_expression": null
+  },
+  {
+    "schema_name": "public",
+    "table_name": "workspaces",
+    "policy_name": "CC can manage own workspaces",
+    "command": "*",
+    "roles": "public",
+    "using_expression": "(EXISTS ( SELECT 1\n   FROM clients\n  WHERE ((clients.id = workspaces.client_id) AND (clients.cc_id = auth.uid()))))",
+    "check_expression": null
+  }
+]
