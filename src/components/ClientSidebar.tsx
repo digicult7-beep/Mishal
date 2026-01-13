@@ -47,15 +47,29 @@ export default function ClientSidebar({
     onTasksTrackerClick,
     onMeetingsClick,
     onEmployeesClick,
-    activeView = 'clients'
-}: ClientSidebarProps) {
+    activeView = 'clients',
+    isOpen = false,
+    onClose = () => {}
+}: ClientSidebarProps & { isOpen?: boolean; onClose?: () => void }) {
     const [currentTime, setCurrentTime] = useState(new Date())
+    const [isMobile, setIsMobile] = useState(false)
 
     useEffect(() => {
         const timer = setInterval(() => {
             setCurrentTime(new Date())
         }, 1000)
-        return () => clearInterval(timer)
+        
+        const checkMobile = () => {
+            setIsMobile(window.innerWidth < 768)
+        }
+        
+        checkMobile()
+        window.addEventListener('resize', checkMobile)
+        
+        return () => {
+            clearInterval(timer)
+            window.removeEventListener('resize', checkMobile)
+        }
     }, [])
 
     const getGreeting = () => {
@@ -80,8 +94,24 @@ export default function ClientSidebar({
         })
     }
 
-    return (
-        <aside style={{
+    // Determine styles based on mobile state
+    const sidebarStyle: React.CSSProperties = isMobile 
+        ? {
+            position: 'fixed' as const,
+            top: 0,
+            left: isOpen ? 0 : '-100%',
+            height: '100%',
+            width: '280px',
+            background: 'var(--sidebar-bg)',
+            borderRight: '1px solid var(--border-color)',
+            display: 'flex',
+            flexDirection: 'column',
+            zIndex: 100,
+            transition: 'left 0.3s ease',
+            color: 'var(--text-primary)',
+            boxShadow: isOpen ? '0 0 40px rgba(0,0,0,0.5)' : 'none'
+        }
+        : {
             width: '280px',
             background: 'var(--sidebar-bg)',
             borderRight: '1px solid var(--border-color)',
@@ -90,183 +120,216 @@ export default function ClientSidebar({
             flexShrink: 0,
             zIndex: 50,
             transition: 'width 0.3s ease',
-            color: 'var(--text-primary)'
-        }}>
-            {/* User Profile Header */}
-            <div style={{ padding: '1rem', borderBottom: '1px solid var(--border-color)', background: 'var(--sidebar-bg)' }}>
-                <div
-                    onClick={onProfileClick}
+            color: 'var(--text-primary)',
+            height: '100%'
+        }
+
+    return (
+        <>
+            {/* Mobile Backdrop */}
+            {isMobile && isOpen && (
+                <div 
+                    onClick={onClose}
                     style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.75rem',
-                        cursor: onProfileClick ? 'pointer' : 'default'
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        background: 'rgba(0,0,0,0.5)',
+                        backdropFilter: 'blur(4px)',
+                        zIndex: 90
                     }}
-                >
-                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-color)', fontWeight: '600', fontSize: '0.875rem', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
-                        {profile?.avatar_url ? (
-                            <img src={profile.avatar_url} alt={profile.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                        ) : (
-                            profile?.full_name?.[0] || 'U'
-                        )}
-                    </div>
-                    <div style={{ flex: 1, overflow: 'hidden' }}>
-                        <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '0.2rem', fontWeight: '600' }}>
-                            {getGreeting()},
-                        </div>
-                        <p className="text-gradient" style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', overflow: 'visible', whiteSpace: 'normal', lineHeight: '1.2', background: 'linear-gradient(to right, #ec4899, #8b5cf6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>{profile?.full_name}</p>
+                />
+            )}
 
-                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', margin: '0.1rem 0 0.25rem' }}>
-                            {formatDate()} • {formatTime()}
-                        </div>
-                        <button onClick={(e) => { e.stopPropagation(); onSignOut(); }} style={{ fontSize: '0.75rem', color: '#ef4444', background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', fontWeight: '500' }}>
-                            <LogOut size={12} /> Sign Out
-                        </button>
-                    </div>
-
-                </div>
-            </div>
-
-            {/* Main Navigation */}
-            <div style={{ padding: '1rem 1rem 0' }}>
-                <h2 style={{ fontSize: '0.75rem', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.75rem', paddingLeft: '0.5rem' }}>
-                    Menu
-                </h2>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                    {[
-                        { id: 'creative-progress', label: 'Content Calendar', icon: LayoutGrid },
-                        { id: 'tasks-tracker', label: 'Tasks Tracker', icon: Briefcase },
-                        { id: 'meetings', label: 'Meetings', icon: Users },
-                        { id: 'employees', label: 'Employees', icon: Users },
-                    ].map(item => (
-                        <div
-                            key={item.id}
-                            onClick={() => {
-                                if (item.id === 'creative-progress') onCreativeProgressClick?.()
-                                if (item.id === 'tasks-tracker') onTasksTrackerClick?.()
-                                if (item.id === 'meetings') onMeetingsClick?.()
-                                if (item.id === 'employees') onEmployeesClick?.()
-                            }}
-                            style={{
-                                padding: '0.75rem 0.75rem',
-                                borderRadius: '0.5rem',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.75rem',
-                                background: activeView === item.id
-                                    ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)'
-                                    : 'transparent',
-                                color: activeView === item.id ? 'white' : 'var(--text-secondary)',
-                                transition: 'all 0.2s',
-                                fontWeight: activeView === item.id ? '600' : '400',
-                                boxShadow: 'none'
-                            }}
-                            onMouseEnter={(e) => {
-                                if (activeView !== item.id) {
-                                    e.currentTarget.style.background = 'var(--bg-tertiary)'
-                                    e.currentTarget.style.color = 'var(--text-primary)'
-                                }
-                            }}
-                            onMouseLeave={(e) => {
-                                if (activeView !== item.id) {
-                                    e.currentTarget.style.background = 'transparent'
-                                    e.currentTarget.style.color = 'var(--text-secondary)'
-                                }
-                            }}
-                        >
-                            <item.icon size={18} style={{ opacity: activeView === item.id ? 1 : 0.7 }} />
-                            <span>{item.label}</span>
-                        </div>
-                    ))}
-                </div>
-            </div>
-
-            {/* Clients List */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', padding: '0 0.5rem' }}>
-                    <h2 style={{ fontSize: '0.75rem', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                        Clients
-                    </h2>
-                    <button
-                        onClick={onAdd}
+            <aside style={sidebarStyle}>
+                {/* User Profile Header */}
+                <div style={{ padding: '1rem', borderBottom: '1px solid var(--border-color)', background: 'var(--sidebar-bg)' }}>
+                    <div
+                        onClick={() => {
+                            onProfileClick?.()
+                            if (isMobile) onClose()
+                        }}
                         style={{
-                            padding: '0.3rem',
-                            background: 'var(--bg-tertiary)',
-                            border: '1px solid var(--border-color)',
-                            borderRadius: '6px',
-                            color: 'var(--text-secondary)',
-                            cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            transition: 'all 0.2s'
-                        }}
-                        onMouseEnter={(e) => {
-                            e.currentTarget.style.borderColor = '#8b5cf6'
-                            e.currentTarget.style.color = '#8b5cf6'
-                        }}
-                        onMouseLeave={(e) => {
-                            e.currentTarget.style.borderColor = 'var(--border-color)'
-                            e.currentTarget.style.color = 'var(--text-secondary)'
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.75rem',
+                            cursor: onProfileClick ? 'pointer' : 'default'
                         }}
                     >
-                        <Plus size={14} />
-                    </button>
+                        <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-color)', fontWeight: '600', fontSize: '0.875rem', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
+                            {profile?.avatar_url ? (
+                                <img src={profile.avatar_url} alt={profile.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            ) : (
+                                profile?.full_name?.[0] || 'U'
+                            )}
+                        </div>
+                        <div style={{ flex: 1, overflow: 'hidden' }}>
+                            <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '0.2rem', fontWeight: '600' }}>
+                                {getGreeting()},
+                            </div>
+                            <p className="text-gradient" style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', overflow: 'visible', whiteSpace: 'normal', lineHeight: '1.2', background: 'linear-gradient(to right, #ec4899, #8b5cf6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>{profile?.full_name}</p>
+
+                            <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', margin: '0.1rem 0 0.25rem' }}>
+                                {formatDate()} • {formatTime()}
+                            </div>
+                            <button onClick={(e) => { e.stopPropagation(); onSignOut(); }} style={{ fontSize: '0.75rem', color: '#ef4444', background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', fontWeight: '500' }}>
+                                <LogOut size={12} /> Sign Out
+                            </button>
+                        </div>
+
+                    </div>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                    {clients.length === 0 ? (
-                        <div style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                            No clients found.
-                        </div>
-                    ) : (
-                        clients.map(client => (
+                {/* Main Navigation */}
+                <div style={{ padding: '1rem 1rem 0' }}>
+                    <h2 style={{ fontSize: '0.75rem', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.75rem', paddingLeft: '0.5rem' }}>
+                        Menu
+                    </h2>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                        {[
+                            { id: 'creative-progress', label: 'Content Calendar', icon: LayoutGrid },
+                            { id: 'tasks-tracker', label: 'Tasks Tracker', icon: Briefcase },
+                            { id: 'meetings', label: 'Meetings', icon: Users },
+                            { id: 'employees', label: 'Employees', icon: Users },
+                        ].map(item => (
                             <div
-                                key={client.id}
-                                onClick={() => onSelect(client.id)}
+                                key={item.id}
+                                onClick={() => {
+                                    if (item.id === 'creative-progress') onCreativeProgressClick?.()
+                                    if (item.id === 'tasks-tracker') onTasksTrackerClick?.()
+                                    if (item.id === 'meetings') onMeetingsClick?.()
+                                    if (item.id === 'employees') onEmployeesClick?.()
+                                    if (isMobile) onClose()
+                                }}
                                 style={{
                                     padding: '0.75rem 0.75rem',
                                     borderRadius: '0.5rem',
                                     cursor: 'pointer',
                                     display: 'flex',
                                     alignItems: 'center',
-                                    justifyContent: 'space-between',
-                                    background: (activeView === 'clients' && selectedId === client.id)
+                                    gap: '0.75rem',
+                                    background: activeView === item.id
                                         ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)'
                                         : 'transparent',
-                                    color: (activeView === 'clients' && selectedId === client.id) ? 'white' : 'var(--text-secondary)',
+                                    color: activeView === item.id ? 'white' : 'var(--text-secondary)',
                                     transition: 'all 0.2s',
-                                    fontWeight: (activeView === 'clients' && selectedId === client.id) ? '600' : '400',
+                                    fontWeight: activeView === item.id ? '600' : '400',
                                     boxShadow: 'none'
                                 }}
                                 onMouseEnter={(e) => {
-                                    if (activeView !== 'clients' || selectedId !== client.id) {
+                                    if (activeView !== item.id) {
                                         e.currentTarget.style.background = 'var(--bg-tertiary)'
                                         e.currentTarget.style.color = 'var(--text-primary)'
                                     }
                                 }}
                                 onMouseLeave={(e) => {
-                                    if (activeView !== 'clients' || selectedId !== client.id) {
+                                    if (activeView !== item.id) {
                                         e.currentTarget.style.background = 'transparent'
                                         e.currentTarget.style.color = 'var(--text-secondary)'
                                     }
                                 }}
                             >
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', overflow: 'hidden' }}>
-                                    <Briefcase size={16} style={{ opacity: (activeView === 'clients' && selectedId === client.id) ? 1 : 0.7 }} />
-                                    <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{client.name}</span>
-                                </div>
-
-                                {(activeView === 'clients' && selectedId === client.id) && (
-                                    <div style={{ display: 'flex', gap: '0.25rem' }}>
-                                        <button onClick={(e) => { e.stopPropagation(); onEdit(client); }} style={{ padding: '0.25rem', border: 'none', background: 'rgba(255,255,255,0.2)', borderRadius: '4px', cursor: 'pointer', color: 'white' }} title="Edit"><Pencil size={12} /></button>
-                                        <button onClick={(e) => { e.stopPropagation(); onDelete(client.id); }} style={{ padding: '0.25rem', border: 'none', background: 'rgba(255,255,255,0.2)', borderRadius: '4px', cursor: 'pointer', color: '#fecaca' }} title="Delete"><Trash2 size={12} /></button>
-                                    </div>
-                                )}
+                                <item.icon size={18} style={{ opacity: activeView === item.id ? 1 : 0.7 }} />
+                                <span>{item.label}</span>
                             </div>
-                        ))
-                    )}
+                        ))}
+                    </div>
                 </div>
-            </div>
-        </aside>
+
+                {/* Clients List */}
+                <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', padding: '0 0.5rem' }}>
+                        <h2 style={{ fontSize: '0.75rem', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            Clients
+                        </h2>
+                        <button
+                            onClick={() => {
+                                onAdd()
+                                if (isMobile) onClose()
+                            }}
+                            style={{
+                                padding: '0.3rem',
+                                background: 'var(--bg-tertiary)',
+                                border: '1px solid var(--border-color)',
+                                borderRadius: '6px',
+                                color: 'var(--text-secondary)',
+                                cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                transition: 'all 0.2s'
+                            }}
+                            onMouseEnter={(e) => {
+                                e.currentTarget.style.borderColor = '#8b5cf6'
+                                e.currentTarget.style.color = '#8b5cf6'
+                            }}
+                            onMouseLeave={(e) => {
+                                e.currentTarget.style.borderColor = 'var(--border-color)'
+                                e.currentTarget.style.color = 'var(--text-secondary)'
+                            }}
+                        >
+                            <Plus size={14} />
+                        </button>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                        {clients.length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                No clients found.
+                            </div>
+                        ) : (
+                            clients.map(client => (
+                                <div
+                                    key={client.id}
+                                    onClick={() => {
+                                        onSelect(client.id)
+                                        if (isMobile) onClose()
+                                    }}
+                                    style={{
+                                        padding: '0.75rem 0.75rem',
+                                        borderRadius: '0.5rem',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        background: (activeView === 'clients' && selectedId === client.id)
+                                            ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)'
+                                            : 'transparent',
+                                        color: (activeView === 'clients' && selectedId === client.id) ? 'white' : 'var(--text-secondary)',
+                                        transition: 'all 0.2s',
+                                        fontWeight: (activeView === 'clients' && selectedId === client.id) ? '600' : '400',
+                                        boxShadow: 'none'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        if (activeView !== 'clients' || selectedId !== client.id) {
+                                            e.currentTarget.style.background = 'var(--bg-tertiary)'
+                                            e.currentTarget.style.color = 'var(--text-primary)'
+                                        }
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        if (activeView !== 'clients' || selectedId !== client.id) {
+                                            e.currentTarget.style.background = 'transparent'
+                                            e.currentTarget.style.color = 'var(--text-secondary)'
+                                        }
+                                    }}
+                                >
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', overflow: 'hidden' }}>
+                                        <Briefcase size={16} style={{ opacity: (activeView === 'clients' && selectedId === client.id) ? 1 : 0.7 }} />
+                                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{client.name}</span>
+                                    </div>
+
+                                    {(activeView === 'clients' && selectedId === client.id) && (
+                                        <div style={{ display: 'flex', gap: '0.25rem' }}>
+                                            <button onClick={(e) => { e.stopPropagation(); onEdit(client); }} style={{ padding: '0.25rem', border: 'none', background: 'rgba(255,255,255,0.2)', borderRadius: '4px', cursor: 'pointer', color: 'white' }} title="Edit"><Pencil size={12} /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); onDelete(client.id); }} style={{ padding: '0.25rem', border: 'none', background: 'rgba(255,255,255,0.2)', borderRadius: '4px', cursor: 'pointer', color: '#fecaca' }} title="Delete"><Trash2 size={12} /></button>
+                                        </div>
+                                    )}
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            </aside>
+        </>
     )
 }
