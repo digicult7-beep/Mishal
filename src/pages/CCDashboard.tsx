@@ -825,7 +825,7 @@ export default function CCDashboard() {
                                 <line x1="3" y1="18" x2="21" y2="18"></line>
                             </svg>
                         </button>
-                        <h1 style={{ fontSize: '1.2rem', fontWeight: '700', margin: 0 }} className="text-gradient">Dashboard</h1>
+                        <h1 style={{ fontSize: '1.2rem', fontWeight: '700', margin: 0, color: 'var(--text-primary)' }}>Dashboard</h1>
                     </div>
                 </div>
             )}

@@ -104,6 +104,17 @@ export default function CreativeProgress({ clientId }: CreativeProgressProps) {
     const [dateRangeStart, setDateRangeStart] = useState('')
     const [dateRangeEnd, setDateRangeEnd] = useState('')
 
+    const [isMobile, setIsMobile] = useState(false)
+
+    useEffect(() => {
+        const checkMobile = () => {
+            setIsMobile(window.innerWidth < 768)
+        }
+        checkMobile()
+        window.addEventListener('resize', checkMobile)
+        return () => window.removeEventListener('resize', checkMobile)
+    }, [])
+
     useEffect(() => {
         fetchTasks()
     }, [])
@@ -461,10 +472,10 @@ export default function CreativeProgress({ clientId }: CreativeProgressProps) {
                     <h1 style={{ fontSize: '1.875rem', fontWeight: 'bold' }}>Content Calendar</h1>
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'stretch' : 'center', gap: isMobile ? '1rem' : '0' }}>
 
-                    {/* View Switcher - Only visible if not in small screens potentially, but here effectively always */}
-                    <div style={{ display: 'flex', background: 'var(--bg-tertiary)', padding: '0.25rem', borderRadius: '8px', border: '1px solid var(--border-color)', marginRight: '1rem' }}>
+                    {/* View Switcher */}
+                    <div style={{ display: 'flex', background: 'var(--bg-tertiary)', padding: '0.25rem', borderRadius: '8px', border: '1px solid var(--border-color)', marginRight: isMobile ? 0 : '1rem', width: isMobile ? 'fit-content' : 'auto' }}>
                         {[
                             { id: 'list', icon: List, label: 'List' },
                             { id: 'board', icon: Kanban, label: 'Board' },
@@ -491,7 +502,7 @@ export default function CreativeProgress({ clientId }: CreativeProgressProps) {
                         ))}
                     </div>
 
-                    <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--border-color)', overflowX: 'auto', paddingBottom: '2px', flex: 1 }}>
+                    <div style={{ display: 'flex', gap: '1rem', borderBottom: isMobile ? 'none' : '1px solid var(--border-color)', overflowX: 'auto', paddingBottom: '2px', flex: 1, order: isMobile ? 3 : 0 }}>
                         {tabs.map(tab => (
                             <button
                                 key={tab}
@@ -505,14 +516,15 @@ export default function CreativeProgress({ clientId }: CreativeProgressProps) {
                                     fontWeight: '500',
                                     transition: 'all 0.2s',
                                     whiteSpace: 'nowrap',
-                                    cursor: 'pointer'
+                                    cursor: 'pointer',
+                                    flexShrink: 0
                                 }}
                             >
                                 {tab}
                             </button>
                         ))}
                     </div>
-                    <div style={{ display: 'flex', gap: '0.75rem' }}>
+                    <div style={{ display: 'flex', gap: '0.75rem', flexDirection: isMobile ? 'column' : 'row' }}>
                         <div style={{ position: 'relative' }}>
                             <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
                             <input
@@ -527,113 +539,117 @@ export default function CreativeProgress({ clientId }: CreativeProgressProps) {
                                     background: 'var(--bg-secondary)',
                                     color: 'var(--text-primary)',
                                     outline: 'none',
-                                    fontSize: '0.875rem'
+                                    fontSize: '0.875rem',
+                                    width: isMobile ? '100%' : 'auto'
                                 }}
                             />
                         </div>
-                        <button
-                            onClick={() => {
-                                setSearchTerm('');
-                                setActiveTab('Overview');
-                                setFilterTimeRange('all');
-                                setAssigneeFilter('');
-                                setContentTypeFilter('');
-                                setDateRangeStart('');
-                                setDateRangeEnd('');
-                            }}
-                            style={{
-                                padding: '0.5rem 1rem',
-                                background: 'transparent',
-                                border: '1px solid var(--border-color)',
-                                color: 'var(--text-secondary)',
-                                borderRadius: '6px',
-                                fontWeight: '500',
-                                fontSize: '0.875rem',
-                                cursor: 'pointer'
-                            }}
-                        >
-                            Reset
-                        </button>
-
-                        <button
-                            onClick={() => setShowFilters(!showFilters)}
-                            style={{
-                                padding: '0.5rem',
-                                background: showFilters ? 'var(--bg-tertiary)' : 'transparent',
-                                border: '1px solid var(--border-color)',
-                                color: 'var(--text-secondary)',
-                                borderRadius: '6px',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center'
-                            }}
-                            title="Toggle Filters"
-                        >
-                            <Filter size={18} />
-                        </button>
-
-                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <div style={{ display: 'flex', gap: '0.75rem' }}>
                             <button
                                 onClick={() => {
-                                    setFilterTimeRange(filterTimeRange === 'weekly' ? 'all' : 'weekly');
+                                    setSearchTerm('');
+                                    setActiveTab('Overview');
+                                    setFilterTimeRange('all');
+                                    setAssigneeFilter('');
+                                    setContentTypeFilter('');
                                     setDateRangeStart('');
                                     setDateRangeEnd('');
                                 }}
                                 style={{
                                     padding: '0.5rem 1rem',
+                                    background: 'transparent',
+                                    border: '1px solid var(--border-color)',
+                                    color: 'var(--text-secondary)',
                                     borderRadius: '6px',
                                     fontWeight: '500',
                                     fontSize: '0.875rem',
                                     cursor: 'pointer',
-                                    border: filterTimeRange === 'weekly' ? 'none' : '1px solid var(--border-color)',
-                                    background: filterTimeRange === 'weekly' ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)' : 'transparent',
-                                    color: filterTimeRange === 'weekly' ? 'white' : 'var(--text-secondary)',
-                                    transition: 'all 0.3s ease',
-                                    boxShadow: 'none'
+                                    flex: isMobile ? 1 : 'initial'
                                 }}
                             >
-                                Weekly
+                                Reset
                             </button>
+
                             <button
-                                onClick={() => {
-                                    setFilterTimeRange(filterTimeRange === 'monthly' ? 'all' : 'monthly');
-                                    setDateRangeStart('');
-                                    setDateRangeEnd('');
-                                }}
+                                onClick={() => setShowFilters(!showFilters)}
                                 style={{
+                                    padding: '0.5rem',
+                                    background: showFilters ? 'var(--bg-tertiary)' : 'transparent',
+                                    border: '1px solid var(--border-color)',
+                                    color: 'var(--text-secondary)',
+                                    borderRadius: '6px',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center'
+                                }}
+                                title="Toggle Filters"
+                            >
+                                <Filter size={18} />
+                            </button>
+
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                <button
+                                    onClick={() => {
+                                        setFilterTimeRange(filterTimeRange === 'weekly' ? 'all' : 'weekly');
+                                        setDateRangeStart('');
+                                        setDateRangeEnd('');
+                                    }}
+                                    style={{
+                                        padding: '0.5rem 1rem',
+                                        borderRadius: '6px',
+                                        fontWeight: '500',
+                                        fontSize: '0.875rem',
+                                        cursor: 'pointer',
+                                        border: filterTimeRange === 'weekly' ? 'none' : '1px solid var(--border-color)',
+                                        background: filterTimeRange === 'weekly' ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)' : 'transparent',
+                                        color: filterTimeRange === 'weekly' ? 'white' : 'var(--text-secondary)',
+                                        transition: 'all 0.3s ease',
+                                        boxShadow: 'none'
+                                    }}
+                                >
+                                    Weekly
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setFilterTimeRange(filterTimeRange === 'monthly' ? 'all' : 'monthly');
+                                        setDateRangeStart('');
+                                        setDateRangeEnd('');
+                                    }}
+                                    style={{
+                                        padding: '0.5rem 1rem',
+                                        borderRadius: '6px',
+                                        fontWeight: '500',
+                                        fontSize: '0.875rem',
+                                        cursor: 'pointer',
+                                        border: filterTimeRange === 'monthly' ? 'none' : '1px solid var(--border-color)',
+                                        background: filterTimeRange === 'monthly' ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)' : 'transparent',
+                                        color: filterTimeRange === 'monthly' ? 'white' : 'var(--text-secondary)',
+                                        transition: 'all 0.3s ease',
+                                        boxShadow: 'none'
+                                    }}
+                                >
+                                    Monthly
+                                </button>
+                            </div>
+                            {/* Save View button removed */}
+                            <button
+                                onClick={() => setIsModalOpen(true)}
+                                style={{
+                                    display: 'flex', alignItems: 'center', gap: '0.5rem',
                                     padding: '0.5rem 1rem',
+                                    background: 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)',
+                                    color: 'white',
                                     borderRadius: '6px',
                                     fontWeight: '500',
                                     fontSize: '0.875rem',
+                                    border: 'none',
                                     cursor: 'pointer',
-                                    border: filterTimeRange === 'monthly' ? 'none' : '1px solid var(--border-color)',
-                                    background: filterTimeRange === 'monthly' ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)' : 'transparent',
-                                    color: filterTimeRange === 'monthly' ? 'white' : 'var(--text-secondary)',
-                                    transition: 'all 0.3s ease',
                                     boxShadow: 'none'
-                                }}
-                            >
-                                Monthly
+                                }}>
+                                <Plus size={16} /> New
                             </button>
                         </div>
-                        {/* Save View button removed */}
-                        <button
-                            onClick={() => setIsModalOpen(true)}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: '0.5rem',
-                                padding: '0.5rem 1rem',
-                                background: 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)',
-                                color: 'white',
-                                borderRadius: '6px',
-                                fontWeight: '500',
-                                fontSize: '0.875rem',
-                                border: 'none',
-                                cursor: 'pointer',
-                                boxShadow: 'none'
-                            }}>
-                            <Plus size={16} /> New
-                        </button>
                     </div>
                 </div>
                 {/* Advanced Filters */}
