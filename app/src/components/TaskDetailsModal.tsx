@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { User, Flag, Clock, Layout, CheckSquare, Briefcase } from 'lucide-react'
 import Modal from './Modal'
-import RichTextEditor from './RichTextEditor'
+
 import TaskComments from './TaskComments'
 import SubtaskTimer from './SubtaskTimer'
+import SubtaskListEditor from './SubtaskListEditor'
 
 interface TaskDetailsModalProps {
     isOpen: boolean
@@ -14,10 +15,16 @@ interface TaskDetailsModalProps {
     isCoordinator?: boolean
 }
 
+interface Subtask {
+    id: string
+    title: string
+    is_completed: boolean
+}
+
 // TaskDetailsModal component
 export default function TaskDetailsModal({ isOpen, onClose, task, onUpdate }: TaskDetailsModalProps) {
     // Data State
-    const [subtasksContent, setSubtasksContent] = useState('')
+    const [subtasks, setSubtasks] = useState<Subtask[]>([])
     const [title, setTitle] = useState('')
     const [statuses, setStatuses] = useState<any[]>([])
     const [progress, setProgress] = useState(0)
@@ -37,50 +44,55 @@ export default function TaskDetailsModal({ isOpen, onClose, task, onUpdate }: Ta
         loadStatuses()
     }, [task?.department_id])
 
-    // Initialize
+    // Load Subtasks & Init Title
     useEffect(() => {
         if (isOpen && task) {
-            setSubtasksContent(task.subtasks_content || '')
             setTitle(task.title || '')
-            calculateProgress(task.subtasks_content || '')
+            loadSubtasks()
         }
     }, [isOpen, task])
 
-    const calculateProgress = (htmlContent: string) => {
-        if (!htmlContent) {
-            setProgress(0)
-            return
-        }
-        const parser = new DOMParser()
-        const doc = parser.parseFromString(htmlContent, 'text/html')
-        const allTodos = doc.querySelectorAll('li[data-type="taskItem"]')
-        const completedTodos = doc.querySelectorAll('li[data-type="taskItem"][data-checked="true"]')
-        if (allTodos.length === 0) {
-            setProgress(0)
+    const loadSubtasks = async () => {
+        if (!task?.id) return
+        const { data } = await supabase
+            .from('subtasks')
+            .select('*')
+            .eq('task_id', task.id)
+            .order('created_at', { ascending: true }) // Tasks usually ordered by creation unless positioned
+
+        if (data) {
+            setSubtasks(data)
+            calculateProgress(data)
         } else {
-            setProgress(Math.round((completedTodos.length / allTodos.length) * 100))
+            setSubtasks([])
+            setProgress(0)
         }
     }
 
-    const handleUpdateSubtasks = async (newContent: string) => {
-        setSubtasksContent(newContent)
-        calculateProgress(newContent)
+    const calculateProgress = (items: Subtask[]) => {
+        if (!items || items.length === 0) {
+            setProgress(0)
+            return
+        }
+        const completed = items.filter(t => t.is_completed).length
+        setProgress(Math.round((completed / items.length) * 100))
+    }
 
-        // Check if all subtasks are completed
+    // -- Atomic Subtask Handlers --
+
+    const checkAutoStatusUpdate = async (items: Subtask[]) => {
+        const total = items.length
+        const completed = items.filter(t => t.is_completed).length
         let newStatusId = undefined
-        const parser = new DOMParser()
-        const doc = parser.parseFromString(newContent, 'text/html')
-        const allTodos = doc.querySelectorAll('li[data-type="taskItem"]')
-        const completedTodos = doc.querySelectorAll('li[data-type="taskItem"][data-checked="true"]')
 
-        if (allTodos.length > 0) {
+        if (total > 0) {
             let targetStatusId = undefined
 
-            if (completedTodos.length === 0) {
+            if (completed === 0) {
                 // 0 checked -> To Do
                 const s = statuses.find(s => /to\s?do|backlog|pending|open|not started/i.test(s.label))
                 if (s) targetStatusId = s.id
-            } else if (completedTodos.length === allTodos.length) {
+            } else if (completed === total) {
                 // All checked -> Done
                 const s = statuses.find(s => /done|complete|resolved|closed|finish/i.test(s.label))
                 if (s) targetStatusId = s.id
@@ -95,18 +107,103 @@ export default function TaskDetailsModal({ isOpen, onClose, task, onUpdate }: Ta
             }
         }
 
-        try {
-            const updates: any = { subtasks_content: newContent }
-            if (newStatusId) {
-                updates.status_id = newStatusId
-            }
-
-            await supabase.from('tasks').update(updates).eq('id', task.id)
-            onUpdate()
-        } catch (error) {
-            console.error('Error updating subtasks:', error)
+        if (newStatusId) {
+            handleUpdateStatus(newStatusId)
         }
     }
+
+    const handleAddSubtask = async (text: string) => {
+        // Optimistic
+        const tempId = crypto.randomUUID()
+        const newSubtask: Subtask = { id: tempId, title: text, is_completed: false }
+        const updatedList = [...subtasks, newSubtask]
+        setSubtasks(updatedList)
+        calculateProgress(updatedList)
+
+        try {
+            const { data, error } = await supabase
+                .from('subtasks')
+                .insert({ task_id: task.id, title: text, is_completed: false })
+                .select()
+                .single()
+
+            if (error) throw error
+            if (data) {
+                // Replace temp ID with real ID
+                setSubtasks(prev => prev.map(t => t.id === tempId ? data : t))
+            }
+        } catch (error) {
+            console.error('Error adding subtask:', error)
+            // Rollback
+            setSubtasks(prev => prev.filter(t => t.id !== tempId))
+        }
+        checkAutoStatusUpdate(updatedList)
+    }
+
+    const handleToggleSubtask = async (id: string, isCompleted: boolean) => {
+        // Optimistic
+        const updatedList = subtasks.map(t => t.id === id ? { ...t, is_completed: isCompleted } : t)
+        setSubtasks(updatedList)
+        calculateProgress(updatedList)
+        checkAutoStatusUpdate(updatedList)
+
+        try {
+            const { error } = await supabase
+                .from('subtasks')
+                .update({ is_completed: isCompleted })
+                .eq('id', id)
+
+            if (error) throw error
+        } catch (error) {
+            console.error('Error toggling subtask:', error)
+            // Rollback
+            setSubtasks(prev => prev.map(t => t.id === id ? { ...t, is_completed: !isCompleted } : t))
+        }
+    }
+
+    const handleDeleteSubtask = async (id: string) => {
+        // Optimistic
+        const deletedTask = subtasks.find(t => t.id === id)
+        const updatedList = subtasks.filter(t => t.id !== id)
+        setSubtasks(updatedList)
+        calculateProgress(updatedList)
+        checkAutoStatusUpdate(updatedList)
+
+        try {
+            const { error } = await supabase
+                .from('subtasks')
+                .delete()
+                .eq('id', id)
+
+            if (error) throw error
+        } catch (error) {
+            console.error('Error deleting subtask:', error)
+            // Rollback
+            if (deletedTask) {
+                setSubtasks(prev => [...prev, deletedTask])
+            }
+        }
+    }
+
+    const handleUpdateSubtaskText = async (id: string, text: string) => {
+        // Optimistic
+        const updatedList = subtasks.map(t => t.id === id ? { ...t, title: text } : t)
+        setSubtasks(updatedList)
+
+        // Debounce could be good here, but for now direct contentEditable logic
+        try {
+            const { error } = await supabase
+                .from('subtasks')
+                .update({ title: text })
+                .eq('id', id)
+
+            if (error) throw error
+        } catch (error) {
+            console.error('Error updating subtask text:', error)
+        }
+    }
+
+    // ----------------------------
 
     const handleUpdateTitle = async () => {
         if (title !== task.title) {
@@ -265,14 +362,8 @@ export default function TaskDetailsModal({ isOpen, onClose, task, onUpdate }: Ta
                     <hr style={{ border: 'none', borderBottom: '1px solid #e5e7eb', margin: '2rem 0' }} />
 
                     {/* Subtasks Section */}
-                    {/* Subtasks Section */}
                     <div style={{ marginBottom: '3rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-                            {/* Header moved inside SubtaskTimer for unified look, or kept here if needed. 
-                                Since SubtaskTimer now has a header, we can hide this one or sync them.
-                                Let's keep the Progress bar here but remove the 'Subtasks' text header if we are in View mode,
-                                because SubtaskTimer has its own header.
-                            */}
                             {isEditingSubtasks && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--text-primary)' }}>
                                     <CheckSquare size={20} style={{ color: '#ec4899' }} />
@@ -291,7 +382,7 @@ export default function TaskDetailsModal({ isOpen, onClose, task, onUpdate }: Ta
                                 </div>
                             )}
 
-                            {!isEditingSubtasks && <div />} {/* Spacer if header is hidden */}
+                            {!isEditingSubtasks && <div />}
 
                             {progress > 0 && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -304,16 +395,18 @@ export default function TaskDetailsModal({ isOpen, onClose, task, onUpdate }: Ta
                         </div>
 
                         {isEditingSubtasks ? (
-                            <div className="notion-editor-wrapper">
-                                <RichTextEditor
-                                    value={subtasksContent}
-                                    onChange={handleUpdateSubtasks}
-                                    placeholder="Add subtasks using '/' → To-do List"
-                                    style={{ minHeight: '150px', marginBottom: '1rem' }}
+                            <div className="subtasks-editor-wrapper">
+                                <SubtaskListEditor
+                                    subtasks={subtasks}
+                                    onAdd={handleAddSubtask}
+                                    onToggle={handleToggleSubtask}
+                                    onDelete={handleDeleteSubtask}
+                                    onUpdateText={handleUpdateSubtaskText}
                                 />
                                 <button
                                     onClick={() => setIsEditingSubtasks(false)}
                                     style={{
+                                        marginTop: '1rem',
                                         background: 'var(--success-color)',
                                         color: 'white',
                                         border: 'none',
@@ -330,8 +423,8 @@ export default function TaskDetailsModal({ isOpen, onClose, task, onUpdate }: Ta
                         ) : (
                             <SubtaskTimer
                                 taskId={task.id}
-                                subtasksContent={subtasksContent}
-                                onUpdateSubtasks={handleUpdateSubtasks}
+                                subtasks={subtasks}
+                                onToggleSubtask={handleToggleSubtask}
                                 onEdit={() => setIsEditingSubtasks(true)}
                             />
                         )}
@@ -342,6 +435,7 @@ export default function TaskDetailsModal({ isOpen, onClose, task, onUpdate }: Ta
         </Modal>
     )
 }
+
 
 const labelStyle: React.CSSProperties = {
     color: 'var(--text-primary)', // Keeping it clear/white/primary as requested for "suitable colors"

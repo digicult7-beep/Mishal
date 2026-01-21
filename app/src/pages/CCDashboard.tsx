@@ -112,6 +112,23 @@ export default function CCDashboard() {
 
     const [editingDepartment, setEditingDepartment] = useState<Department | null>(null)
 
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+    const [isMobile, setIsMobile] = useState(false)
+
+    // Pagination State for Employees
+    const [empPage, setEmpPage] = useState(1)
+    const EMP_ITEMS_PER_PAGE = 20
+    const [empTotalCount, setEmpTotalCount] = useState(0)
+
+    useEffect(() => {
+        const checkMobile = () => {
+            setIsMobile(window.innerWidth < 768)
+        }
+        checkMobile()
+        window.addEventListener('resize', checkMobile)
+        return () => window.removeEventListener('resize', checkMobile)
+    }, [])
+
     const handleSignOut = async () => {
         try {
             await signOut()
@@ -141,7 +158,7 @@ export default function CCDashboard() {
         cleanupDuplicates().then(() => {
             checkOverdueTasks()
         })
-    }, [user])
+    }, [user, empPage])
 
     const cleanupDuplicates = async () => {
         if (!user) return
@@ -243,30 +260,19 @@ export default function CCDashboard() {
                         message += ` No employees assigned.`
                     }
 
-                    // Check if notification already exists
-                    const { data: existingData } = await supabase
+                    // Server-side deduplication using upsert
+                    await supabase
                         .from('notifications')
-                        .select('id, message')
-                        .eq('user_id', user.id)
-                        .eq('title', notificationTitle)
-                        .limit(1)
-
-                    const existing = existingData?.[0]
-
-                    if (!existing) {
-                        await createNotification(
-                            notificationTitle,
-                            message,
-                            'warning'
-                        )
-                    } else if (existing.message !== message) {
-                        // Update existing notification if message has changed (e.g. employees assigned)
-                        // Do NOT mark as unread to avoid repeating alerts
-                        await supabase
-                            .from('notifications')
-                            .update({ message: message })
-                            .eq('id', existing.id)
-                    }
+                        .upsert({
+                            user_id: user.id,
+                            title: notificationTitle,
+                            message: message,
+                            type: 'warning',
+                            deduplication_key: `task_overdue_${task.id}`
+                        }, {
+                            onConflict: 'user_id, deduplication_key',
+                            ignoreDuplicates: false
+                        })
                 }
             }
         } catch (error) {
@@ -382,12 +388,17 @@ export default function CCDashboard() {
     }
 
     const loadEmployees = async () => {
-        const { data } = await supabase
+        let query = supabase
             .from('profiles')
-            .select('*, task_assignments(count)')
+            .select('*, task_assignments(count)', { count: 'exact' })
             .eq('role', 'employee')
             .eq('created_by', user?.id)
             .order('created_at', { ascending: false })
+
+        // Apply pagination
+        query = query.range((empPage - 1) * EMP_ITEMS_PER_PAGE, empPage * EMP_ITEMS_PER_PAGE - 1)
+
+        const { data, count } = await query
 
         // Map the count from the nested object to a flat property
         const employeesWithCount = data?.map((emp: any) => ({
@@ -396,6 +407,7 @@ export default function CCDashboard() {
         }))
 
         setEmployees(employeesWithCount || [])
+        setEmpTotalCount(count || 0)
     }
 
     const logActivity = async (actionType: string, description: string, entityId?: string) => {
@@ -780,8 +792,43 @@ export default function CCDashboard() {
 
 
 
+
+
     return (
-        <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: theme === 'dark' ? 'var(--bg-primary)' : 'var(--bg-gradient)', color: 'var(--text-primary)', transition: 'background-color 0.3s' }}>
+        <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: theme === 'dark' ? 'var(--bg-primary)' : 'var(--bg-gradient)', color: 'var(--text-primary)', transition: 'background-color 0.3s', flexDirection: isMobile ? 'column' : 'row' }}>
+
+            {/* Mobile Header */}
+            {isMobile && (
+                <div style={{
+                    padding: '1rem',
+                    background: 'var(--sidebar-bg)',
+                    borderBottom: '1px solid var(--border-color)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    zIndex: 40
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                        <button
+                            onClick={() => setIsSidebarOpen(true)}
+                            style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: 'var(--text-primary)',
+                                cursor: 'pointer',
+                                padding: '0.25rem'
+                            }}
+                        >
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="3" y1="12" x2="21" y2="12"></line>
+                                <line x1="3" y1="6" x2="21" y2="6"></line>
+                                <line x1="3" y1="18" x2="21" y2="18"></line>
+                            </svg>
+                        </button>
+                        <h1 style={{ fontSize: '1.2rem', fontWeight: '700', margin: 0, color: 'var(--text-primary)' }}>Dashboard</h1>
+                    </div>
+                </div>
+            )}
 
             <ClientSidebar
                 clients={filteredClients}
@@ -789,30 +836,41 @@ export default function CCDashboard() {
                 onSelect={(id) => {
                     setSelectedClient(id)
                     setViewMode('dashboard')
+                    setIsSidebarOpen(false)
                 }}
                 onAdd={() => setShowAddClient(true)}
                 onEdit={(c) => { setEditingClient(c); setClientName(c.name); setShowAddClient(true); }}
                 onDelete={handleDeleteClient}
                 profile={profile}
                 onSignOut={handleSignOut}
-                onProfileClick={() => setViewMode('profile')}
+                onProfileClick={() => {
+                    setViewMode('profile')
+                    setIsSidebarOpen(false)
+                }}
                 onCreativeProgressClick={() => {
                     setViewMode('creative-progress')
-                    setSelectedClient(null)
+                    setIsSidebarOpen(false)
                 }}
                 onTasksTrackerClick={() => {
                     setViewMode('tasks-tracker')
-                    setSelectedClient(null)
+                    setIsSidebarOpen(false)
                 }}
                 onMeetingsClick={() => {
                     setViewMode('meetings')
-                    setSelectedClient(null)
+                    setIsSidebarOpen(false)
                 }}
                 onEmployeesClick={() => {
                     setViewMode('employees')
-                    setSelectedClient(null)
+                    setIsSidebarOpen(false)
                 }}
-                activeView={viewMode === 'dashboard' ? 'clients' : viewMode}
+                activeView={
+                    viewMode === 'creative-progress' ? 'creative-progress' :
+                        viewMode === 'tasks-tracker' ? 'tasks-tracker' :
+                            viewMode === 'meetings' ? 'meetings' :
+                                viewMode === 'employees' ? 'employees' : 'clients'
+                }
+                isOpen={isSidebarOpen}
+                onClose={() => setIsSidebarOpen(false)}
             />
 
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
@@ -833,24 +891,74 @@ export default function CCDashboard() {
                         <Meetings clientId={selectedClient} />
                     </div>
                 ) : viewMode === 'employees' ? (
-                    <div style={{ overflowY: 'auto', height: '100%' }}>
-                        <EmployeeGallery
-                            employees={employees}
-                            onAdd={() => setShowAddEmployee(true)}
-                            onEdit={(emp) => {
-                                setEditingEmployee(emp)
-                                setEmpFullName(emp.full_name)
-                                setEmpEmail(emp.email)
-                                setEmpPassword('')
-                                setShowAddEmployee(true)
-                            }}
-                            onDelete={handleDeleteEmployee}
-                            onStatusChange={handleStatusChange}
-                            onTaskClick={(id, name) => {
-                                setSelectedEmployeeForTasks({ id, name })
-                                setShowEmployeeTasks(true)
-                            }}
-                        />
+                    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                        <div style={{ flex: 1, overflowY: 'auto', paddingBottom: '1rem' }}>
+                            <EmployeeGallery
+                                employees={employees}
+                                onAdd={() => setShowAddEmployee(true)}
+                                onEdit={(emp) => {
+                                    setEditingEmployee(emp)
+                                    setEmpFullName(emp.full_name)
+                                    setEmpEmail(emp.email)
+                                    setEmpPassword('')
+                                    setShowAddEmployee(true)
+                                }}
+                                onDelete={handleDeleteEmployee}
+                                onStatusChange={handleStatusChange}
+                                onTaskClick={(id, name) => {
+                                    setSelectedEmployeeForTasks({ id, name })
+                                    setShowEmployeeTasks(true)
+                                }}
+                            />
+                        </div>
+                        {/* Pagination Controls */}
+                        <div style={{
+                            padding: '1rem 2rem',
+                            borderTop: '1px solid var(--border-color)',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            background: 'var(--bg-secondary)'
+                        }}>
+                            <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                                Showing <span style={{ fontWeight: '600', color: 'var(--text-primary)' }}>{employees.length}</span> of <span style={{ fontWeight: '600', color: 'var(--text-primary)' }}>{empTotalCount}</span> employees
+                            </div>
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                <button
+                                    onClick={() => setEmpPage(p => Math.max(1, p - 1))}
+                                    disabled={empPage === 1 || loading}
+                                    style={{
+                                        padding: '0.5rem 1rem',
+                                        borderRadius: 'var(--radius-md)',
+                                        border: '1px solid var(--border-color)',
+                                        background: empPage === 1 ? 'var(--bg-tertiary)' : 'var(--bg-primary)',
+                                        color: empPage === 1 ? 'var(--text-disabled)' : 'var(--text-primary)',
+                                        cursor: empPage === 1 ? 'not-allowed' : 'pointer',
+                                        fontSize: '0.875rem'
+                                    }}
+                                >
+                                    Previous
+                                </button>
+                                <span style={{ display: 'flex', alignItems: 'center', padding: '0 0.5rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                                    Page {empPage}
+                                </span>
+                                <button
+                                    onClick={() => setEmpPage(p => p + 1)}
+                                    disabled={empPage * EMP_ITEMS_PER_PAGE >= empTotalCount || loading}
+                                    style={{
+                                        padding: '0.5rem 1rem',
+                                        borderRadius: 'var(--radius-md)',
+                                        border: '1px solid var(--border-color)',
+                                        background: empPage * EMP_ITEMS_PER_PAGE >= empTotalCount ? 'var(--bg-tertiary)' : 'var(--bg-primary)',
+                                        color: empPage * EMP_ITEMS_PER_PAGE >= empTotalCount ? 'var(--text-disabled)' : 'var(--text-primary)',
+                                        cursor: empPage * EMP_ITEMS_PER_PAGE >= empTotalCount ? 'not-allowed' : 'pointer',
+                                        fontSize: '0.875rem'
+                                    }}
+                                >
+                                    Next
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 ) : (
                     <>

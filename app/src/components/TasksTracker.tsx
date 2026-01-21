@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import {
     LayoutGrid,
@@ -67,6 +67,11 @@ export default function TasksTracker({ clientId }: TasksTrackerProps) {
     const [searchTerm, setSearchTerm] = useState('')
     const [prioritySort, setPrioritySort] = useState<'asc' | 'desc' | null>(null)
 
+    // Pagination State
+    const [page, setPage] = useState(1)
+    const ITEMS_PER_PAGE = 20
+    const [totalCount, setTotalCount] = useState(0)
+
     // For the Kanban board, it usually works best within a single context (like a department).
     // If we are showing ALL tasks, a Kanban board might be messy if columns are department-specific.
     // For now, let's implement the List View as the primary view for "All Tasks", 
@@ -74,7 +79,7 @@ export default function TasksTracker({ clientId }: TasksTrackerProps) {
 
     useEffect(() => {
         fetchTasks()
-    }, [])
+    }, [page])
 
     const fetchTasks = async () => {
         setLoading(true)
@@ -120,7 +125,7 @@ export default function TasksTracker({ clientId }: TasksTrackerProps) {
                             client:clients!inner(name)
                         )
                     )
-                `)
+                `, { count: 'exact' })
                 .order('created_at', { ascending: false })
 
             if (clientId) {
@@ -128,9 +133,12 @@ export default function TasksTracker({ clientId }: TasksTrackerProps) {
                 query = query.eq('department.workspace.client_id', clientId)
             }
 
-            const { data, error } = await query
+            query = query.range((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE - 1)
+
+            const { data, error, count } = await query
 
             if (error) throw error
+            setTotalCount(count || 0)
 
             // Fetch Time Logs
             const { data: logsData } = await supabase
@@ -223,11 +231,18 @@ export default function TasksTracker({ clientId }: TasksTrackerProps) {
         return `${h}h ${m}m ${s}s`
     }
 
+    // Track latest request to prevent race conditions in rapid drag operations
+    const pendingDragUpdateRef = useRef<string | null>(null)
+
     const handleDragEnd = async (result: DropResult) => {
         const { destination, source, draggableId } = result
 
         if (!destination) return
         if (destination.droppableId === source.droppableId && destination.index === source.index) return
+
+        // Generate unique request ID to track this specific update
+        const requestId = `${draggableId}-${Date.now()}`
+        pendingDragUpdateRef.current = requestId
 
         // Find the target status
         const targetStatusId = destination.droppableId
@@ -258,8 +273,11 @@ export default function TasksTracker({ clientId }: TasksTrackerProps) {
 
             if (error) throw error
         } catch (error) {
-            console.error('Error updating task status:', error)
-            fetchTasks() // Revert/Sync on error
+            // Only reload if this was the latest request (prevents stale responses from causing issues)
+            if (pendingDragUpdateRef.current === requestId) {
+                console.error('Error updating task status:', error)
+                fetchTasks()
+            }
         }
     }
 
@@ -513,6 +531,54 @@ export default function TasksTracker({ clientId }: TasksTrackerProps) {
                     </div>
                 </DragDropContext>
             )}
+            {/* Pagination Controls */}
+            <div style={{
+                marginTop: 'auto',
+                paddingTop: '1rem',
+                borderTop: '1px solid var(--border-color)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+            }}>
+                <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                    Showing <span style={{ fontWeight: '600', color: 'var(--text-primary)' }}>{tasks.length}</span> of <span style={{ fontWeight: '600', color: 'var(--text-primary)' }}>{totalCount}</span> tasks
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                        onClick={() => setPage(p => Math.max(1, p - 1))}
+                        disabled={page === 1 || loading}
+                        style={{
+                            padding: '0.5rem 1rem',
+                            borderRadius: '6px',
+                            border: '1px solid var(--border-color)',
+                            background: page === 1 ? 'var(--bg-tertiary)' : 'var(--bg-primary)',
+                            color: page === 1 ? 'var(--text-secondary)' : 'var(--text-primary)',
+                            cursor: page === 1 ? 'not-allowed' : 'pointer',
+                            fontSize: '0.875rem'
+                        }}
+                    >
+                        Previous
+                    </button>
+                    <span style={{ display: 'flex', alignItems: 'center', padding: '0 0.5rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                        Page {page}
+                    </span>
+                    <button
+                        onClick={() => setPage(p => p + 1)}
+                        disabled={page * ITEMS_PER_PAGE >= totalCount || loading}
+                        style={{
+                            padding: '0.5rem 1rem',
+                            borderRadius: '6px',
+                            border: '1px solid var(--border-color)',
+                            background: page * ITEMS_PER_PAGE >= totalCount ? 'var(--bg-tertiary)' : 'var(--bg-primary)',
+                            color: page * ITEMS_PER_PAGE >= totalCount ? 'var(--text-secondary)' : 'var(--text-primary)',
+                            cursor: page * ITEMS_PER_PAGE >= totalCount ? 'not-allowed' : 'pointer',
+                            fontSize: '0.875rem'
+                        }}
+                    >
+                        Next
+                    </button>
+                </div>
+            </div>
         </div >
     )
 }

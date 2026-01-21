@@ -133,8 +133,8 @@ export default function CCProfile() {
     }
 
     return (
-        <div style={{ maxWidth: '800px', margin: '0 auto', animation: 'fadeIn 0.5s ease-out' }}>
-            <div style={{ ...glassCardStyle, padding: '2rem' }}>
+        <div style={{ maxWidth: '800px', width: '100%', margin: '0 auto', animation: 'fadeIn 0.5s ease-out' }}>
+            <div style={{ ...glassCardStyle, padding: window.innerWidth < 768 ? '1.5rem' : '2rem' }}>
                 <div style={{ marginBottom: '2rem', textAlign: 'center' }}>
                     <div style={{ position: 'relative', width: '100px', margin: '0 auto 1rem auto' }}>
                         <div

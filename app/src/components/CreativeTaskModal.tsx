@@ -233,24 +233,14 @@ export default function CreativeTaskModal({ isOpen, onClose, onTaskCreated, task
                 targetTaskId = newTask.id
             }
 
-            // Handle Assignments
+            // Handle Assignments Atomically
             if (targetTaskId) {
-                // Delete existing
-                await supabase.from('task_assignments').delete().eq('task_id', targetTaskId)
+                const { error: rpcError } = await supabase.rpc('update_task_assignments', {
+                    p_task_id: targetTaskId,
+                    p_assignee_ids: assigneeIds
+                })
 
-                // Insert new
-                if (assigneeIds.length > 0) {
-                    const assignmentRows = assigneeIds.map(uid => ({
-                        task_id: targetTaskId,
-                        user_id: uid
-                    }))
-
-                    const { error: assignError } = await supabase
-                        .from('task_assignments')
-                        .insert(assignmentRows)
-
-                    if (assignError) throw assignError
-                }
+                if (rpcError) throw rpcError
             }
 
             onTaskCreated()
