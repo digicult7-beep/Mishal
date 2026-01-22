@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { LayoutGrid, List, LogOut, Moon, Sun, CheckCircle2, User, Calendar, Flag, BarChart2, Phone } from 'lucide-react'
+import { ENABLE_NOTIFICATION_DEDUPLICATION } from '../config'
 import KanbanBoard from '../components/KanbanBoard'
 import TaskDetailsModal from '../components/TaskDetailsModal'
 import NotificationCenter from '../components/NotificationCenter'
@@ -252,19 +253,74 @@ export default function EmployeeDashboard() {
 
                     const deduplicationKey = `${keyPrefix}_${task.id}`
 
-                    // Server-side deduplication using upsert
-                    await supabase
-                        .from('notifications')
-                        .upsert({
-                            user_id: user.id,
-                            title: notificationTitle,
-                            message: notificationMessage,
-                            type: type,
-                            deduplication_key: deduplicationKey
-                        }, {
-                            onConflict: 'user_id, deduplication_key',
-                            ignoreDuplicates: false
-                        })
+                    if (ENABLE_NOTIFICATION_DEDUPLICATION) {
+                        // Server-side deduplication check
+                        try {
+                            const { data: existing, error: selectError } = await supabase
+                                .from('notifications')
+                                .select('id')
+                                .eq('user_id', user.id)
+                                .eq('deduplication_key', deduplicationKey)
+                                .maybeSingle()
+
+                            if (selectError) throw selectError
+
+                            if (!existing) {
+                                const { error: insertError } = await supabase
+                                    .from('notifications')
+                                    .insert({
+                                        user_id: user.id,
+                                        title: notificationTitle,
+                                        message: notificationMessage,
+                                        type: type,
+                                        deduplication_key: deduplicationKey
+                                    })
+                                if (insertError) throw insertError
+                            }
+                        } catch (error) {
+                            // Fallback: Check by content if key checks fail
+                            const { data: existingContent } = await supabase
+                                .from('notifications')
+                                .select('id')
+                                .eq('user_id', user.id)
+                                .eq('title', notificationTitle)
+                                .eq('message', notificationMessage)
+                                .is('is_read', false)
+                                .maybeSingle()
+
+                            if (!existingContent) {
+                                await supabase
+                                    .from('notifications')
+                                    .insert({
+                                        user_id: user.id,
+                                        title: notificationTitle,
+                                        message: notificationMessage,
+                                        type: type
+                                    })
+                            }
+                        }
+                    } else {
+                        // Deduplication disabled - but still check content
+                        const { data: existingContent } = await supabase
+                            .from('notifications')
+                            .select('id')
+                            .eq('user_id', user.id)
+                            .eq('title', notificationTitle)
+                            .eq('message', notificationMessage)
+                            .is('is_read', false)
+                            .maybeSingle()
+
+                        if (!existingContent) {
+                            await supabase
+                                .from('notifications')
+                                .insert({
+                                    user_id: user.id,
+                                    title: notificationTitle,
+                                    message: notificationMessage,
+                                    type: type
+                                })
+                        }
+                    }
                 }
             }
         } finally {

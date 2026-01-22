@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { createClient } from '@supabase/supabase-js'
 import Modal from '../components/Modal'
+import { ENABLE_NOTIFICATION_DEDUPLICATION } from '../config'
 import {
     Users,
     Briefcase,
@@ -260,19 +261,74 @@ export default function CCDashboard() {
                         message += ` No employees assigned.`
                     }
 
-                    // Server-side deduplication using upsert
-                    await supabase
-                        .from('notifications')
-                        .upsert({
-                            user_id: user.id,
-                            title: notificationTitle,
-                            message: message,
-                            type: 'warning',
-                            deduplication_key: `task_overdue_${task.id}`
-                        }, {
-                            onConflict: 'user_id, deduplication_key',
-                            ignoreDuplicates: false
-                        })
+                    if (ENABLE_NOTIFICATION_DEDUPLICATION) {
+                        // Server-side deduplication check
+                        try {
+                            const { data: existing, error: selectError } = await supabase
+                                .from('notifications')
+                                .select('id')
+                                .eq('user_id', user.id)
+                                .eq('deduplication_key', `task_overdue_${task.id}`)
+                                .maybeSingle()
+
+                            if (selectError) throw selectError
+
+                            if (!existing) {
+                                const { error: insertError } = await supabase
+                                    .from('notifications')
+                                    .insert({
+                                        user_id: user.id,
+                                        title: notificationTitle,
+                                        message: message,
+                                        type: 'warning',
+                                        deduplication_key: `task_overdue_${task.id}`
+                                    })
+                                if (insertError) throw insertError
+                            }
+                        } catch (err) {
+                            // Fallback: Check by content if key checks fail
+                            const { data: existingContent } = await supabase
+                                .from('notifications')
+                                .select('id')
+                                .eq('user_id', user.id)
+                                .eq('title', notificationTitle)
+                                .eq('message', message)
+                                .is('is_read', false)
+                                .maybeSingle()
+
+                            if (!existingContent) {
+                                await supabase
+                                    .from('notifications')
+                                    .insert({
+                                        user_id: user.id,
+                                        title: notificationTitle,
+                                        message: message,
+                                        type: 'warning'
+                                    })
+                            }
+                        }
+                    } else {
+                        // Deduplication disabled - but still check content to avoid spam
+                        const { data: existingContent } = await supabase
+                            .from('notifications')
+                            .select('id')
+                            .eq('user_id', user.id)
+                            .eq('title', notificationTitle)
+                            .eq('message', message)
+                            .is('is_read', false)
+                            .maybeSingle()
+
+                        if (!existingContent) {
+                            await supabase
+                                .from('notifications')
+                                .insert({
+                                    user_id: user.id,
+                                    title: notificationTitle,
+                                    message: message,
+                                    type: 'warning'
+                                })
+                        }
+                    }
                 }
             }
         } catch (error) {

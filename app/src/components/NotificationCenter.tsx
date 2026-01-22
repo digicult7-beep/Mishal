@@ -27,21 +27,42 @@ export default function NotificationCenter({ hideIfEmpty = false }: Notification
         if (!user) return
         loadNotifications()
 
+        // Realtime Subscription
+        const channelName = `notifications:${user.id}`
         const subscription = supabase
-            .channel('notifications')
+            .channel(channelName)
             .on('postgres_changes', {
                 event: 'INSERT',
                 schema: 'public',
                 table: 'notifications',
                 filter: `user_id=eq.${user.id}`
             }, (payload) => {
-                setNotifications(prev => [payload.new as Notification, ...prev])
+                // Optimistically add notification if it's new
+                setNotifications(prev => {
+                    const exists = prev.some(n => n.id === payload.new.id)
+                    if (exists) return prev
+                    return [payload.new as Notification, ...prev]
+                })
                 setUnreadCount(prev => prev + 1)
             })
-            .subscribe()
+            .subscribe((status) => {
+                if (status === 'SUBSCRIBED') {
+                    // console.log('Notification subscription active')
+                } else if (status === 'CHANNEL_ERROR') {
+                    console.error('Notification subscription error')
+                }
+            })
+
+        // Polling Fallback to ensure notifications are delivered
+        // even if realtime connection drops or is not configured
+        // Set to 3 seconds for near-realtime feel
+        const pollInterval = setInterval(() => {
+            loadNotifications()
+        }, 3000)
 
         return () => {
             subscription.unsubscribe()
+            clearInterval(pollInterval)
         }
     }, [user])
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { Play, Square, Clock } from 'lucide-react'
+import { TIMER_SAFETY_ENABLED } from '../config'
 
 interface SubtaskTimeLog {
     id: string
@@ -100,6 +101,21 @@ export default function SubtaskTimer({ taskId, subtasks, onToggleSubtask, onEdit
 
         setLoading(true)
         try {
+            if (TIMER_SAFETY_ENABLED) {
+                const { data: existingTimer } = await supabase
+                    .from('subtask_time_logs')
+                    .select('id, task_id, subtask_name')
+                    .eq('user_id', user.id)
+                    .is('end_time', null)
+                    .maybeSingle()
+
+                if (existingTimer) {
+                    alert(`You already have an active timer running for subtask "${existingTimer.subtask_name}". Please stop it before starting a new one.`)
+                    setLoading(false)
+                    return
+                }
+            }
+
             const startTime = new Date()
             const payload = {
                 task_id: taskId,
