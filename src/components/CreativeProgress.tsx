@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import CreativeTaskModal from './CreativeTaskModal'
 import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd'
@@ -218,11 +218,18 @@ export default function CreativeProgress({ clientId }: CreativeProgressProps) {
         }
     }
 
+    // Track latest request to prevent race conditions in rapid drag operations
+    const pendingDragUpdateRef = useRef<string | null>(null)
+
     const handleDragEnd = async (result: DropResult) => {
         const { destination, source, draggableId } = result
 
         if (!destination) return
         if (destination.droppableId === source.droppableId && destination.index === source.index) return
+
+        // Generate unique request ID to track this specific update
+        const requestId = `${draggableId}-${Date.now()}`
+        pendingDragUpdateRef.current = requestId
 
         // Find the target status
         const targetStatusId = destination.droppableId
@@ -253,9 +260,11 @@ export default function CreativeProgress({ clientId }: CreativeProgressProps) {
 
             if (error) throw error
         } catch (error) {
-            console.error('Error updating task status:', error)
-            // Revert on error would be ideal, but for now just logging.
-            fetchTasks() // Re-fetch to sync
+            // Only reload if this was the latest request (prevents stale responses from causing issues)
+            if (pendingDragUpdateRef.current === requestId) {
+                console.error('Error updating task status:', error)
+                fetchTasks() // Re-fetch to sync
+            }
         }
     }
 

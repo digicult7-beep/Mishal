@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import Modal from './Modal'
 import { CheckCircle2, Calendar, User, LayoutGrid, List, X } from 'lucide-react'
@@ -18,6 +18,11 @@ interface Task {
     id: string
     title: string
     description?: string
+    subtasks?: {
+        id: string
+        title: string
+        is_completed: boolean
+    }[]
     subtasks_content?: string
     status_id: string
     priority: 'low' | 'medium' | 'high'
@@ -59,6 +64,11 @@ export default function DepartmentTasksModal({
     const [viewMode, setViewMode] = useState<'list' | 'board'>('list')
     const [editingTask, setEditingTask] = useState<Task | null>(null)
 
+    // Pagination State
+    const [page, setPage] = useState(1)
+    const ITEMS_PER_PAGE = 20
+    const [totalCount, setTotalCount] = useState(0)
+
     // Form State
     const [title, setTitle] = useState('')
     const [description, setDescription] = useState('')
@@ -66,11 +76,48 @@ export default function DepartmentTasksModal({
     const [priority, setPriority] = useState<'low' | 'medium' | 'high'>('medium')
     const [dueDate, setDueDate] = useState('')
 
+    // Subtask State for Editing
+    const [subtasks, setEditingSubtasks] = useState<{ id: string, title: string, is_completed: boolean }[]>([])
+
+    useEffect(() => {
+        if (editingTask) {
+            loadSubtasks(editingTask.id)
+        } else {
+            setEditingSubtasks([])
+        }
+    }, [editingTask])
+
+    const loadSubtasks = async (taskId: string) => {
+        const { data } = await supabase
+            .from('subtasks')
+            .select('*')
+            .eq('task_id', taskId)
+            .order('created_at', { ascending: true })
+        setEditingSubtasks(data || [])
+    }
+
+    const handleToggleSubtask = async (id: string, isCompleted: boolean) => {
+        // Optimistic
+        setEditingSubtasks(prev => prev.map(t => t.id === id ? { ...t, is_completed: isCompleted } : t))
+
+        try {
+            const { error } = await supabase
+                .from('subtasks')
+                .update({ is_completed: isCompleted })
+                .eq('id', id)
+
+            if (error) throw error
+        } catch (error) {
+            console.error('Error toggling subtask:', error)
+            loadSubtasks(editingTask!.id) // Revert
+        }
+    }
+
     useEffect(() => {
         if (isOpen && departmentId) {
             loadData()
         }
-    }, [isOpen, departmentId])
+    }, [isOpen, departmentId, page])
 
     const loadData = async () => {
         if (!departmentId) return
@@ -101,20 +148,23 @@ export default function DepartmentTasksModal({
             setStatuses(statusData || [])
 
             // 2. Load Tasks with Assignments
-            const { data: tasksData, error: tasksError } = await supabase
+            const { data: tasksData, error: tasksError, count } = await supabase
                 .from('tasks')
                 .select(`
                     *,
                     assignments:task_assignments(
                         user_id,
                         user:profiles(full_name, email)
-                    )
-                `)
+                    ),
+                    subtasks(id, is_completed)
+                `, { count: 'exact' })
                 .eq('department_id', departmentId)
                 .order('created_at', { ascending: false })
+                .range((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE - 1)
 
             if (tasksError) throw tasksError
             setTasks(tasksData || [])
+            setTotalCount(count || 0)
 
             // 3. Load Time Logs Summary
             if (tasksData && tasksData.length > 0) {
@@ -167,14 +217,10 @@ export default function DepartmentTasksModal({
                 if (error) throw error
                 taskId = editingTask.id
 
-                // Update assignments
-                // First delete existing
-                const { error: deleteError } = await supabase
-                    .from('task_assignments')
-                    .delete()
-                    .eq('task_id', taskId)
+                if (error) throw error
+                taskId = editingTask.id
 
-                if (deleteError) throw deleteError
+                // Note: Assignment updates are handled atomically at the end via RPC
 
             } else {
                 // Create new task
@@ -197,21 +243,24 @@ export default function DepartmentTasksModal({
                 taskId = data.id
             }
 
-            // Insert new assignments
+            // Atomic update of assignments
             if (assignedTo.length > 0) {
-                // Ensure unique user IDs
                 const uniqueUserIds = [...new Set(assignedTo)]
-                const assignments = uniqueUserIds.map(userId => ({
-                    task_id: taskId,
-                    user_id: userId
-                }))
 
-                // Use upsert to be safe against race conditions or failed deletes
-                const { error: assignError } = await supabase
-                    .from('task_assignments')
-                    .upsert(assignments, { onConflict: 'task_id,user_id' })
+                const { error: rpcError } = await supabase.rpc('update_task_assignments', {
+                    p_task_id: taskId,
+                    p_assignee_ids: uniqueUserIds
+                })
 
-                if (assignError) throw assignError
+                if (rpcError) throw rpcError
+            } else {
+                // Clear assignments if empty
+                const { error: rpcError } = await supabase.rpc('update_task_assignments', {
+                    p_task_id: taskId,
+                    p_assignee_ids: []
+                })
+
+                if (rpcError) throw rpcError
             }
 
             // Reset form and reload
@@ -230,9 +279,21 @@ export default function DepartmentTasksModal({
         }
     }
 
+    // Track latest request per task to prevent race conditions
+    const pendingStatusUpdateRef = useRef<Record<string, string>>({})
+
     const handleUpdateTaskStatus = async (taskId: string, newStatusLabel: string) => {
+        // Generate unique request ID to track this specific update
+        const requestId = `${taskId}-${Date.now()}`
+        pendingStatusUpdateRef.current[taskId] = requestId
+
+        const task = tasks.find(t => t.id === taskId)
+        if (!task) return
+
         const newStatus = statuses.find(s => s.label === newStatusLabel)
         if (!newStatus) return
+
+        const previousStatusId = task.status_id
 
         // Optimistic update
         setTasks(prev => prev.map(t =>
@@ -244,10 +305,16 @@ export default function DepartmentTasksModal({
             .update({ status_id: newStatus.id })
             .eq('id', taskId)
 
+        // Error Handling
         if (error) {
             console.error('Error updating task status:', error)
-            // Revert on error
-            loadData()
+
+            if (pendingStatusUpdateRef.current[taskId] === requestId) {
+                // Revert changes for this task only
+                setTasks(prev => prev.map(t =>
+                    t.id === taskId ? { ...t, status_id: previousStatusId } : t
+                ))
+            }
         }
     }
 
@@ -259,25 +326,6 @@ export default function DepartmentTasksModal({
         setPriority(task.priority)
         setDueDate(task.due_date ? task.due_date.split('T')[0] : '')
         setShowCreateForm(true)
-    }
-
-    const handleUpdateSubtasks = async (newContent: string) => {
-        if (!editingTask) return
-
-        // Optimistic update
-        setEditingTask(prev => prev ? { ...prev, subtasks_content: newContent } : null)
-        setTasks(prev => prev.map(t =>
-            t.id === editingTask.id ? { ...t, subtasks_content: newContent } : t
-        ))
-
-        const { error } = await supabase
-            .from('tasks')
-            .update({ subtasks_content: newContent })
-            .eq('id', editingTask.id)
-
-        if (error) {
-            console.error('Error updating subtasks:', error)
-        }
     }
 
     const handleDeleteTask = async (taskId: string) => {
@@ -318,14 +366,12 @@ export default function DepartmentTasksModal({
         return tmp.textContent || tmp.innerText || ''
     }
 
-    const calculateProgress = (subtasksContent: string | undefined): number => {
-        if (!subtasksContent) return 0
-        const parser = new DOMParser()
-        const doc = parser.parseFromString(subtasksContent, 'text/html')
-        const allTodos = doc.querySelectorAll('li[data-type="taskItem"]')
-        const completedTodos = doc.querySelectorAll('li[data-type="taskItem"][data-checked="true"]')
-        if (allTodos.length === 0) return 0
-        return Math.round((completedTodos.length / allTodos.length) * 100)
+    const calculateProgress = (task: Task): number => {
+        if (task.subtasks && Array.isArray(task.subtasks) && task.subtasks.length > 0) {
+            const completed = task.subtasks.filter(t => t.is_completed).length
+            return Math.round((completed / task.subtasks.length) * 100)
+        }
+        return 0
     }
 
     const handleCreateStatus = async (label: string) => {
@@ -572,13 +618,13 @@ export default function DepartmentTasksModal({
                                                     {formatDuration(timeLogged)}
                                                 </div>
                                             </div>
-                                            {task.subtasks_content && calculateProgress(task.subtasks_content) > 0 && (
+                                            {((task.subtasks?.length ?? 0) > 0 || task.subtasks_content) && calculateProgress(task) > 0 && (
                                                 <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                                     <div style={{ flex: 1, height: '6px', background: 'var(--bg-tertiary)', borderRadius: '3px', overflow: 'hidden' }}>
-                                                        <div style={{ width: `${calculateProgress(task.subtasks_content)}%`, height: '100%', background: 'linear-gradient(135deg, #ec4899 0%, #8b5cf6 100%)', transition: 'width 0.3s' }} />
+                                                        <div style={{ width: `${calculateProgress(task)}%`, height: '100%', background: 'linear-gradient(135deg, #ec4899 0%, #8b5cf6 100%)', transition: 'width 0.3s' }} />
                                                     </div>
                                                     <span style={{ fontSize: '0.7rem', fontWeight: '600', color: 'var(--accent-color)', minWidth: '35px' }}>
-                                                        {calculateProgress(task.subtasks_content)}%
+                                                        {calculateProgress(task)}%
                                                     </span>
                                                 </div>
                                             )}
@@ -587,6 +633,55 @@ export default function DepartmentTasksModal({
                                 })}
                             </div>
                         )}
+                    </div>
+
+                    {/* Pagination Controls */}
+                    <div style={{
+                        padding: '0.75rem 1rem',
+                        borderTop: '1px solid var(--border-color)',
+                        background: 'var(--bg-secondary)',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center'
+                    }}>
+                        <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                            Showing <span style={{ fontWeight: '600', color: 'var(--text-primary)' }}>{tasks.length}</span> of <span style={{ fontWeight: '600', color: 'var(--text-primary)' }}>{totalCount}</span> tasks
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                            <button
+                                onClick={() => setPage(p => Math.max(1, p - 1))}
+                                disabled={page === 1 || loading}
+                                style={{
+                                    padding: '0.4rem 0.8rem',
+                                    borderRadius: '0.375rem',
+                                    border: '1px solid var(--border-color)',
+                                    background: page === 1 ? 'var(--bg-tertiary)' : 'var(--bg-primary)',
+                                    color: page === 1 ? 'var(--text-disabled)' : 'var(--text-primary)',
+                                    cursor: page === 1 ? 'not-allowed' : 'pointer',
+                                    fontSize: '0.875rem'
+                                }}
+                            >
+                                Previous
+                            </button>
+                            <span style={{ display: 'flex', alignItems: 'center', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                                Page {page}
+                            </span>
+                            <button
+                                onClick={() => setPage(p => p + 1)}
+                                disabled={page * ITEMS_PER_PAGE >= totalCount || loading}
+                                style={{
+                                    padding: '0.4rem 0.8rem',
+                                    borderRadius: '0.375rem',
+                                    border: '1px solid var(--border-color)',
+                                    background: page * ITEMS_PER_PAGE >= totalCount ? 'var(--bg-tertiary)' : 'var(--bg-primary)',
+                                    color: page * ITEMS_PER_PAGE >= totalCount ? 'var(--text-disabled)' : 'var(--text-primary)',
+                                    cursor: page * ITEMS_PER_PAGE >= totalCount ? 'not-allowed' : 'pointer',
+                                    fontSize: '0.875rem'
+                                }}
+                            >
+                                Next
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -798,14 +893,16 @@ export default function DepartmentTasksModal({
                                     </div>
                                 </div>
 
+
+
                                 {/* Subtask Timer - Show time summary */}
                                 {editingTask && (
                                     <div style={{ marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border-color)' }}>
                                         <SubtaskTimer
                                             taskId={editingTask.id}
-                                            subtasksContent={editingTask.subtasks_content || ''}
-                                            onUpdateSubtasks={handleUpdateSubtasks}
-                                            onEdit={() => { }}
+                                            subtasks={subtasks}
+                                            onToggleSubtask={handleToggleSubtask}
+                                            onEdit={() => { alert('Please use the Task Details view to add/remove subtasks.') }}
                                         />
                                     </div>
                                 )}

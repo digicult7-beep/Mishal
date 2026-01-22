@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { LayoutGrid, List, LogOut, Moon, Sun, CheckCircle2, User, Calendar, Flag, BarChart2, Phone } from 'lucide-react'
+import { ENABLE_NOTIFICATION_DEDUPLICATION } from '../config'
 import KanbanBoard from '../components/KanbanBoard'
 import TaskDetailsModal from '../components/TaskDetailsModal'
 import NotificationCenter from '../components/NotificationCenter'
@@ -25,6 +26,11 @@ export default function EmployeeDashboard() {
     const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
     const [userName, setUserName] = useState<string>('')
     const [currentTime, setCurrentTime] = useState(new Date())
+
+    // Pagination State
+    const [page, setPage] = useState(1)
+    const ITEMS_PER_PAGE = 20
+    const [totalCount, setTotalCount] = useState(0)
 
     useEffect(() => {
         const timer = setInterval(() => setCurrentTime(new Date()), 1000)
@@ -80,7 +86,7 @@ export default function EmployeeDashboard() {
         return () => {
             taskSubscription.unsubscribe()
         }
-    }, [user])
+    }, [user, page])
 
     const cleanupDuplicates = async () => {
         if (!user) return
@@ -136,7 +142,7 @@ export default function EmployeeDashboard() {
                         user:profiles(full_name, email)
                     ),
                     creator:profiles!created_by(full_name)
-                `)
+                `, { count: 'exact' })
                 .order('created_at', { ascending: false })
 
             if (taskIds.length > 0) {
@@ -145,7 +151,10 @@ export default function EmployeeDashboard() {
                 query = query.eq('assigned_to', user.id)
             }
 
-            const { data: tasksData, error: tasksError } = await query
+            // Apply pagination
+            query = query.range((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE - 1)
+
+            const { data: tasksData, error: tasksError, count } = await query
 
             if (tasksError) throw tasksError
 
@@ -165,6 +174,7 @@ export default function EmployeeDashboard() {
             }
 
             setTasks(tasksData || [])
+            setTotalCount(count || 0)
 
             // Update selected task if it exists to keep it in sync
             if (selectedTask) {
@@ -182,15 +192,7 @@ export default function EmployeeDashboard() {
         }
     }
 
-    const createNotification = async (title: string, message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
-        if (!user) return
-        await supabase.from('notifications').insert({
-            user_id: user.id,
-            title,
-            message,
-            type
-        })
-    }
+
 
     const isCheckingRef = useRef(false)
 
@@ -243,16 +245,81 @@ export default function EmployeeDashboard() {
                 }
 
                 if (notificationTitle) {
-                    // Check if notification already exists to avoid duplicates
-                    const { data: existing } = await supabase
-                        .from('notifications')
-                        .select('id')
-                        .eq('user_id', user.id)
-                        .eq('title', notificationTitle)
-                        .limit(1)
+                    // Generate stable key based on the type of alert
+                    let keyPrefix = ''
+                    if (type === 'error') keyPrefix = 'task_overdue'
+                    else if (type === 'warning') keyPrefix = 'task_due_today'
+                    else keyPrefix = 'task_due_tomorrow'
 
-                    if (!existing || existing.length === 0) {
-                        await createNotification(notificationTitle, notificationMessage, type)
+                    const deduplicationKey = `${keyPrefix}_${task.id}`
+
+                    if (ENABLE_NOTIFICATION_DEDUPLICATION) {
+                        // Server-side deduplication check
+                        try {
+                            const { data: existing, error: selectError } = await supabase
+                                .from('notifications')
+                                .select('id')
+                                .eq('user_id', user.id)
+                                .eq('deduplication_key', deduplicationKey)
+                                .maybeSingle()
+
+                            if (selectError) throw selectError
+
+                            if (!existing) {
+                                const { error: insertError } = await supabase
+                                    .from('notifications')
+                                    .insert({
+                                        user_id: user.id,
+                                        title: notificationTitle,
+                                        message: notificationMessage,
+                                        type: type,
+                                        deduplication_key: deduplicationKey
+                                    })
+                                if (insertError) throw insertError
+                            }
+                        } catch (error) {
+                            // Fallback: Check by content if key checks fail
+                            const { data: existingContent } = await supabase
+                                .from('notifications')
+                                .select('id')
+                                .eq('user_id', user.id)
+                                .eq('title', notificationTitle)
+                                .eq('message', notificationMessage)
+                                .is('is_read', false)
+                                .maybeSingle()
+
+                            if (!existingContent) {
+                                await supabase
+                                    .from('notifications')
+                                    .insert({
+                                        user_id: user.id,
+                                        title: notificationTitle,
+                                        message: notificationMessage,
+                                        type: type
+                                    })
+                            }
+                        }
+                    } else {
+                        // Deduplication disabled - but still check content
+                        const { data: existingContent } = await supabase
+                            .from('notifications')
+                            .select('id')
+                            .eq('user_id', user.id)
+                            .eq('title', notificationTitle)
+                            .eq('message', notificationMessage)
+                            .is('is_read', false)
+                            .maybeSingle()
+
+                        if (!existingContent) {
+                            await supabase
+                                .from('notifications')
+                                .insert({
+                                    user_id: user.id,
+                                    title: notificationTitle,
+                                    message: notificationMessage,
+                                    type: type
+                                })
+                        }
                     }
                 }
             }
@@ -261,7 +328,14 @@ export default function EmployeeDashboard() {
         }
     }
 
+    // Track latest request per task to prevent race conditions
+    const pendingStatusUpdateRef = useRef<Record<string, string>>({})
+
     const handleUpdateTaskStatus = async (taskId: string, newStatusLabel: string) => {
+        // Generate unique request ID to track this specific update
+        const requestId = `${taskId}-${Date.now()}`
+        pendingStatusUpdateRef.current[taskId] = requestId
+
         const task = tasks.find(t => t.id === taskId)
         if (!task) return
 
@@ -277,6 +351,8 @@ export default function EmployeeDashboard() {
 
         if (!newStatus) return
 
+        const previousStatusId = task.status_id
+
         // Optimistic update
         setTasks(prev => prev.map(t =>
             t.id === taskId ? { ...t, status_id: newStatus.id } : t
@@ -287,9 +363,17 @@ export default function EmployeeDashboard() {
             .update({ status_id: newStatus.id })
             .eq('id', taskId)
 
+        // Error Handling: Revert if this is still the latest request for THIS task
         if (error) {
             console.error('Error updating status:', error)
-            loadData()
+
+            if (pendingStatusUpdateRef.current[taskId] === requestId) {
+                // Revert changes for this task only
+                setTasks(prev => prev.map(t =>
+                    t.id === taskId ? { ...t, status_id: previousStatusId } : t
+                ))
+                alert('Failed to update status. Changes reverted.')
+            }
         }
     }
 
@@ -644,6 +728,61 @@ export default function EmployeeDashboard() {
                         })}
                     </div >
                 )}
+
+                {/* Pagination Controls */}
+                <div style={{
+                    marginTop: '2rem',
+                    padding: '1rem',
+                    background: 'var(--bg-secondary)',
+                    borderRadius: 'var(--radius-lg)',
+                    border: 'var(--glass-border)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                }}>
+                    <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                        Showing <span style={{ fontWeight: '600', color: 'var(--text-primary)' }}>{tasks.length}</span> of <span style={{ fontWeight: '600', color: 'var(--text-primary)' }}>{totalCount}</span> tasks
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button
+                            onClick={() => setPage(p => Math.max(1, p - 1))}
+                            disabled={page === 1 || loading}
+                            style={{
+                                padding: '0.5rem 1rem',
+                                borderRadius: 'var(--radius-md)',
+                                border: '1px solid var(--border-color)',
+                                background: page === 1 ? 'var(--bg-tertiary)' : 'var(--bg-primary)',
+                                color: page === 1 ? 'var(--text-disabled)' : 'var(--text-primary)',
+                                cursor: page === 1 ? 'not-allowed' : 'pointer',
+                                fontSize: '0.875rem',
+                                transition: 'all 0.2s',
+                                fontWeight: '500'
+                            }}
+                        >
+                            Previous
+                        </button>
+                        <span style={{ display: 'flex', alignItems: 'center', padding: '0 1rem', fontSize: '0.875rem', color: 'var(--text-secondary)', fontWeight: '500' }}>
+                            Page {page}
+                        </span>
+                        <button
+                            onClick={() => setPage(p => p + 1)}
+                            disabled={page * ITEMS_PER_PAGE >= totalCount || loading}
+                            style={{
+                                padding: '0.5rem 1rem',
+                                borderRadius: 'var(--radius-md)',
+                                border: '1px solid var(--border-color)',
+                                background: page * ITEMS_PER_PAGE >= totalCount ? 'var(--bg-tertiary)' : 'var(--bg-primary)',
+                                color: page * ITEMS_PER_PAGE >= totalCount ? 'var(--text-disabled)' : 'var(--text-primary)',
+                                cursor: page * ITEMS_PER_PAGE >= totalCount ? 'not-allowed' : 'pointer',
+                                fontSize: '0.875rem',
+                                transition: 'all 0.2s',
+                                fontWeight: '500'
+                            }}
+                        >
+                            Next
+                        </button>
+                    </div>
+                </div>
             </main >
 
             <TaskDetailsModal
